@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Home</title>
+</head>
+<body>
+    <h1>Benvenuto</h1>
+
+    <button id="startBtn">START</button>
+
+    <div id="controls" style="display: none;">
+        <span id="timer">00:00:00</span><br><br>
+        <button id="pauseBtn">PAUSA</button>
+        <button id="stopBtn">STOP</button>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const controls = document.getElementById('controls');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const timerDisplay = document.getElementById('timer');
+
+        let intervalId = null;
+        let secondsElapsed = 0;
+        let isPaused = false;
+
+        function formatTime(totalSeconds) {
+            const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSeconds % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function startTimer() {
+            intervalId = setInterval(() => {
+                secondsElapsed++;
+                timerDisplay.textContent = formatTime(secondsElapsed);
+            }, 1000);
+        }
+
+        startBtn.addEventListener('click', () => {
+            startBtn.style.display = 'none';
+            controls.style.display = 'block';
+            startTimer();
+        });
+
+        pauseBtn.addEventListener('click', () => {
+            if (!isPaused) {
+                clearInterval(intervalId);
+                pauseBtn.textContent = 'RIPRENDI';
+                isPaused = true;
+            } else {
+                startTimer();
+                pauseBtn.textContent = 'PAUSA';
+                isPaused = false;
+            }
+        });
+
+        stopBtn.addEventListener('click', () => {
+            clearInterval(intervalId);
+            secondsElapsed = 0;
+            isPaused = false;
+            timerDisplay.textContent = '00:00:00';
+            pauseBtn.textContent = 'PAUSA';
+            controls.style.display = 'none';
+            startBtn.style.display = 'inline-block';
+        });
+    </script>
+</body>
+</html>

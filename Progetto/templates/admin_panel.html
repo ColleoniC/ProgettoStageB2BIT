@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Pannello Admin</title>
+</head>
+<body>
+    <h1>Benvenuto, {{ admin_name }}</h1>
+    <p><a href="/admin/create_user">Crea utenti</a></p>
+    <form action="/logout" method="POST" style="display:inline;">
+        <button type="submit">Logout</button>
+    </form>
+</body>
+</html>

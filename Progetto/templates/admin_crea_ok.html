@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <title>Utente Creato</title>
+</head>
+<body>
+    <h1>Utente creato con successo</h1>
+    <p>Comunica queste credenziali all'utente (la password non sarà più visibile dopo questa pagina):</p>
+    <ul>
+        <li>Email: {{ email }}</li>
+        <li>Password provvisoria: {{ password }}</li>
+    </ul>
+    <p><a href="/admin/create_user">Crea un altro utente</a></p>
+    <p><a href="/admin/panel">Torna al pannello</a></p>
+</body>
+</html>

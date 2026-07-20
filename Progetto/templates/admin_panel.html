@@ -7,6 +7,34 @@
 <body>
     <h1>Benvenuto, {{ admin_name }}</h1>
     <p><a href="/admin/create_user">Crea utenti</a></p>
+    <table border="1">
+        <tr>
+            <th>Nome</th>
+            <th>Cognome</th>
+            <th>Orario Inizio</th>
+            <th>Orario Pausa Inizio</th>
+            <th>Orario Pausa Fine</th>
+            <th>Orario Fine</th>
+            <th>Azioni</th>
+        </tr>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.name }}</td>
+            <td>{{ user.cognome }}</td>
+            <td>{{ user.orario_inizio }}</td>
+            <td>{{ user.orario_pausa_inizio }}</td>
+            <td>{{ user.orario_pausa_fine }}</td>
+            <td>{{ user.orario_fine }}</td>
+            <td>
+                <a href="/admin/modifica/{{ user.id }}">Modifica</a> |
+                <form action="/admin/elimina/{{ user.id }}" method="POST" style="display:inline;" onsubmit="return confirm('Eliminare {{ user.name }} {{ user.cognome }}?');">
+                    <button type="submit">Elimina</button>
+                </form>
+            </td>
+        </tr>
+    
+        {% endfor %}
+    </table>
     <form action="/logout" method="POST" style="display:inline;">
         <button type="submit">Logout</button>
     </form>

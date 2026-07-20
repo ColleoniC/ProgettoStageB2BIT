@@ -33,7 +33,6 @@ def init_db():
         )
     ''')
 
-    # Migrazione: aggiunge le colonne mancanti se il DB esisteva già con lo schema vecchio
     cursor.execute('PRAGMA table_info(users)')
     colonne_esistenti = {riga[1] for riga in cursor.fetchall()}
     colonne_richieste = {
@@ -47,17 +46,6 @@ def init_db():
         if nome_colonna not in colonne_esistenti:
             cursor.execute(f'ALTER TABLE users ADD COLUMN {nome_colonna} {tipo}')
             print(f"Colonna aggiunta: {nome_colonna}")
-
-    email_demo = 'demo@prova.com'
-    password_demo = 'demo1234'
-
-    cursor.execute('SELECT id FROM users WHERE email = ?', (email_demo,))
-    if cursor.fetchone() is None:
-        cursor.execute(
-            'INSERT INTO users (email, password, name) VALUES (?, ?, ?)',
-            (email_demo, generate_password_hash(password_demo), 'Utente Demo')
-        )
-        print(f"Utente demo creato: {email_demo} / {password_demo}")
 
     conn.commit()
     conn.close()
@@ -108,8 +96,14 @@ def admin_panel():
     redirect_response = require_admin()
     if redirect_response:
         return redirect_response
-    return render_template('admin_panel.html', admin_name=session['user']['name'])
 
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users ORDER BY cognome, name')
+    users = cursor.fetchall()
+    conn.close()
+
+    return render_template('admin_panel.html', admin_name=session['user']['name'], users=users)
 
 @app.route('/admin/create_user', methods=['GET'])
 def create_user_page():
@@ -157,6 +151,81 @@ def create_user():
 
     return render_template('admin_crea_ok.html', email=email, password=password_provvisoria)
 
+@app.route('/admin/modifica/<int:user_id>', methods=['GET'])
+def edit_user_page(user_id):
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+
+    if user is None:
+        return jsonify({'ok': False, 'errore': 'Utente non trovato'}), 404
+
+    return render_template('admin_modifica.html', user=user)
+
+
+@app.route('/admin/modifica/<int:user_id>', methods=['POST'])
+def edit_user(user_id):
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    nome = request.form.get('nome', '').strip()
+    cognome = request.form.get('cognome', '').strip()
+    email = request.form.get('email', '').strip().lower()
+    orario_inizio = request.form.get('orario_inizio', '').strip()
+    orario_pausa_inizio = request.form.get('orario_pausa_inizio', '').strip()
+    orario_pausa_fine = request.form.get('orario_pausa_fine', '').strip()
+    orario_fine = request.form.get('orario_fine', '').strip()
+
+    if not nome or not cognome or not email:
+        return jsonify({'ok': False, 'errore': 'Nome, cognome ed email sono obbligatori'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            '''UPDATE users
+               SET name = ?, cognome = ?, email = ?, orario_inizio = ?,
+                   orario_pausa_inizio = ?, orario_pausa_fine = ?, orario_fine = ?
+               WHERE id = ?''',
+            (nome, cognome, email, orario_inizio, orario_pausa_inizio,
+             orario_pausa_fine, orario_fine, user_id)
+        )
+        if cursor.rowcount == 0:
+            conn.close()
+            return jsonify({'ok': False, 'errore': 'Utente non trovato'}), 404
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Email già registrata da un altro utente'}), 409
+    conn.close()
+
+    return redirect(url_for('admin_panel'))
+
+
+@app.route('/admin/elimina/<int:user_id>', methods=['POST'])
+def delete_user(user_id):
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+    conn.commit()
+    eliminato = cursor.rowcount > 0
+    conn.close()
+
+    if not eliminato:
+        return jsonify({'ok': False, 'errore': 'Utente non trovato'}), 404
+
+    return redirect(url_for('admin_panel'))
 
 @app.route('/login', methods=['POST'])
 def login():

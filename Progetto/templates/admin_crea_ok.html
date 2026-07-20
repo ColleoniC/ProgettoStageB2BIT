@@ -2,16 +2,32 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Utente Creato</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h1>Utente creato con successo</h1>
-    <p>Comunica queste credenziali all'utente (la password non sarà più visibile dopo questa pagina):</p>
-    <ul>
-        <li>Email: {{ email }}</li>
-        <li>Password provvisoria: {{ password }}</li>
-    </ul>
-    <p><a href="/admin/create_user">Crea un altro utente</a></p>
-    <p><a href="/admin/panel">Torna al pannello</a></p>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+    </div>
+
+    <div class="page">
+        <div class="card">
+            <h1>Utente creato con successo</h1>
+            <p>Comunica queste credenziali all'utente — la password non sarà più visibile dopo questa pagina.</p>
+
+            <div class="credentials-box">
+                <ul>
+                    <li>Email: <span class="mono">{{ email }}</span></li>
+                    <li>Password provvisoria: <span class="mono">{{ password }}</span></li>
+                </ul>
+            </div>
+
+            <div class="links">
+                <a href="/admin/create_user">Crea un altro utente →</a>
+                <a href="/admin/panel">← Torna al pannello</a>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

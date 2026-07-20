@@ -2,11 +2,24 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
-    <title>Home</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Timbrature</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h1>Benvenuto</h1>
-    <p><a href="/login">Login utente</a></p>
-    <p><a href="/admin/login">Login amministratore</a></p>
+    <div class="top-bar">
+        <span class="brand">Timbrature</span>
+    </div>
+
+    <div class="page">
+        <div class="card" style="text-align:center;">
+            <h1>Benvenuto</h1>
+            <p>Accedi come dipendente per timbrare, oppure come amministratore per gestire gli utenti.</p>
+            <div class="links" style="align-items:center;">
+                <a class="btn btn-primary" style="max-width:220px;margin:0 auto;" href="/login">Login dipendente</a>
+                <a href="/admin/login">Login amministratore →</a>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

@@ -2,34 +2,59 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Crea Utente</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h1>Crea Utente</h1>
-    <form action="/admin/create_user" method="POST">
-        <label>Nome:
-            <input type="text" name="nome" required>
-        </label><br><br>
-        <label>Cognome:
-            <input type="text" name="cognome" required>
-        </label><br><br>
-        <label>Email:
-            <input type="email" name="email" required>
-        </label><br><br>
-        <label>Orario di inizio:
-            <input type="time" name="orario_inizio" required>
-        </label><br><br>
-        <label>Inizio pausa pranzo:
-            <input type="time" name="orario_pausa_inizio" required>
-        </label><br><br>
-        <label>Fine pausa pranzo:
-            <input type="time" name="orario_pausa_fine" required>
-        </label><br><br>
-        <label>Orario di fine:
-            <input type="time" name="orario_fine" required>
-        </label><br><br>
-        <button type="submit">Crea Utente</button>
-    </form>
-    <p><a href="/admin/panel">Torna al pannello</a></p>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+    </div>
+
+    <div class="page">
+        <div class="card">
+            <h1>Crea utente</h1>
+            <p>Una password provvisoria verrà generata automaticamente.</p>
+
+            <form action="/admin/create_user" method="POST">
+                <div class="field-row">
+                    <label class="field">Nome
+                        <input type="text" name="nome" required>
+                    </label>
+                    <label class="field">Cognome
+                        <input type="text" name="cognome" required>
+                    </label>
+                </div>
+
+                <label class="field">Email
+                    <input type="email" name="email" required>
+                </label>
+
+                <div class="field-row">
+                    <label class="field">Orario di inizio
+                        <input type="time" name="orario_inizio" required>
+                    </label>
+                    <label class="field">Orario di fine
+                        <input type="time" name="orario_fine" required>
+                    </label>
+                </div>
+
+                <div class="field-row">
+                    <label class="field">Inizio pausa pranzo
+                        <input type="time" name="orario_pausa_inizio" required>
+                    </label>
+                    <label class="field">Fine pausa pranzo
+                        <input type="time" name="orario_pausa_fine" required>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Crea utente</button>
+            </form>
+
+            <div class="links">
+                <a href="/admin/panel">← Torna al pannello</a>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

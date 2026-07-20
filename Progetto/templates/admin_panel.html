@@ -2,41 +2,95 @@
 <html lang="it">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Pannello Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h1>Benvenuto, {{ admin_name }}</h1>
-    <p><a href="/admin/create_user">Crea utenti</a></p>
-    <table border="1">
-        <tr>
-            <th>Nome</th>
-            <th>Cognome</th>
-            <th>Orario Inizio</th>
-            <th>Orario Pausa Inizio</th>
-            <th>Orario Pausa Fine</th>
-            <th>Orario Fine</th>
-            <th>Azioni</th>
-        </tr>
-        {% for user in users %}
-        <tr>
-            <td>{{ user.name }}</td>
-            <td>{{ user.cognome }}</td>
-            <td>{{ user.orario_inizio }}</td>
-            <td>{{ user.orario_pausa_inizio }}</td>
-            <td>{{ user.orario_pausa_fine }}</td>
-            <td>{{ user.orario_fine }}</td>
-            <td>
-                <a href="/admin/modifica/{{ user.id }}">Modifica</a> |
-                <form action="/admin/elimina/{{ user.id }}" method="POST" style="display:inline;" onsubmit="return confirm('Eliminare {{ user.name }} {{ user.cognome }}?');">
-                    <button type="submit">Elimina</button>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+        <span class="sub">{{ admin_name }}</span>
+    </div>
+
+    <div class="page wide">
+        <div class="actions-row">
+            <h1 style="margin:0;">Utenti</h1>
+            <div style="display:flex; gap:10px;">
+                <a class="btn btn-brass" href="/admin/create_user">+ Crea utente</a>
+                <a class="btn btn-outline" href="/timbro">Pagina timbratura</a>
+                <form action="/logout" method="POST">
+                    <button type="submit" class="btn btn-outline">Esci</button>
                 </form>
-            </td>
-        </tr>
-    
-        {% endfor %}
-    </table>
-    <form action="/logout" method="POST" style="display:inline;">
-        <button type="submit">Logout</button>
-    </form>
+            </div>
+        </div>
+
+        <div class="notifiche-panel">
+            <div class="notifiche-header">
+                <h2>
+                    Notifiche
+                    {% if notifiche_non_lette > 0 %}
+                    <span class="badge-non-lette">{{ notifiche_non_lette }}</span>
+                    {% endif %}
+                </h2>
+                {% if notifiche_non_lette > 0 %}
+                <form action="/admin/notifiche/segna_lette" method="POST">
+                    <button type="submit" class="btn btn-outline btn-small">Segna tutte come lette</button>
+                </form>
+                {% endif %}
+            </div>
+
+            {% if notifiche %}
+            <ul class="notifiche-lista">
+                {% for n in notifiche %}
+                <li class="notifica notifica-{{ n.tipo }} {{ 'non-letta' if not n.letta else '' }}">
+                    <span class="notifica-punto"></span>
+                    <span class="notifica-messaggio">{{ n.messaggio }}</span>
+                    <span class="notifica-ora mono">{{ n.creato_il[11:16] if n.creato_il|length > 15 else n.creato_il }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">Nessuna notifica al momento.</div>
+            {% endif %}
+        </div>
+
+        <h2 class="section-title">Utenti</h2>
+        {% if users %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Cognome</th>
+                    <th>Entrata</th>
+                    <th>Inizio pausa</th>
+                    <th>Fine pausa</th>
+                    <th>Uscita</th>
+                    <th>Azioni</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.name }}</td>
+                    <td>{{ user.cognome }}</td>
+                    <td class="mono">{{ user.orario_inizio or '—' }}</td>
+                    <td class="mono">{{ user.orario_pausa_inizio or '—' }}</td>
+                    <td class="mono">{{ user.orario_pausa_fine or '—' }}</td>
+                    <td class="mono">{{ user.orario_fine or '—' }}</td>
+                    <td class="actions-cell">
+                        <a class="btn btn-outline btn-small" href="/admin/modifica/{{ user.id }}">Modifica</a>
+                        <form action="/admin/elimina/{{ user.id }}" method="POST"
+                              onsubmit="return confirm('Eliminare {{ user.name }} {{ user.cognome }}?');">
+                            <button type="submit" class="btn btn-danger">Elimina</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">Nessun utente registrato. Inizia creandone uno.</div>
+        {% endif %}
+    </div>
 </body>
 </html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chat con {{ user.name }} {{ user.cognome }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+    </div>
+
+    <div class="page">
+        <div class="chat-header-utente">
+            <h1 style="margin:0;">Chat con {{ user.name }} {{ user.cognome }}</h1>
+            <a class="btn btn-outline btn-small" href="/admin/panel">← Torna al pannello</a>
+        </div>
+
+        <div class="chat-box">
+            <div id="chatMessaggi" class="chat-messaggi">
+                {% if messaggi %}
+                    {% for m in messaggi %}
+                    <div class="chat-bolla chat-bolla-{{ m.mittente }}">
+                        {{ m.testo }}
+                        <span class="chat-bolla-ora">{{ m.creato_il[11:16] if m.creato_il|length > 15 else m.creato_il }}</span>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="chat-vuota">Nessun messaggio con questo dipendente.</div>
+                {% endif %}
+            </div>
+            <form id="chatForm" class="chat-form" action="/admin/chat/{{ user.id }}/invia" method="POST">
+                <input type="text" id="chatTesto" name="testo" placeholder="Scrivi un messaggio…" autocomplete="off" required>
+                <button type="submit" class="btn btn-brass">Invia</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const userId = parseInt('{{ user.id }}', 10);
+        const chatMessaggi = document.getElementById('chatMessaggi');
+        const chatForm = document.getElementById('chatForm');
+        const chatTesto = document.getElementById('chatTesto');
+
+        function scorriInFondo() {
+            chatMessaggi.scrollTop = chatMessaggi.scrollHeight;
+        }
+        scorriInFondo();
+
+        function escapeHtml(testo) {
+            const div = document.createElement('div');
+            div.textContent = testo;
+            return div.innerHTML;
+        }
+
+        function renderMessaggi(messaggi) {
+            chatMessaggi.innerHTML = '';
+            if (!messaggi || messaggi.length === 0) {
+                chatMessaggi.innerHTML = '<div class="chat-vuota">Nessun messaggio con questo dipendente.</div>';
+                return;
+            }
+            messaggi.forEach(m => {
+                const div = document.createElement('div');
+                div.className = 'chat-bolla chat-bolla-' + m.mittente;
+                div.innerHTML = escapeHtml(m.testo) + '<span class="chat-bolla-ora">' + m.ora + '</span>';
+                chatMessaggi.appendChild(div);
+            });
+            scorriInFondo();
+        }
+
+        function aggiornaMessaggi() {
+            fetch(`/admin/chat/${userId}/nuovi`)
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) renderMessaggi(dati.messaggi);
+                })
+                .catch(() => {});
+        }
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const testo = chatTesto.value.trim();
+            if (!testo) return;
+            chatTesto.disabled = true;
+
+            fetch(chatForm.action, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'testo=' + encodeURIComponent(testo)
+            })
+                .then(() => {
+                    chatTesto.value = '';
+                    aggiornaMessaggi();
+                })
+                .finally(() => {
+                    chatTesto.disabled = false;
+                    chatTesto.focus();
+                });
+        });
+
+        setInterval(aggiornaMessaggi, 6000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Timbratura</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body data-is-admin="{{ 'true' if is_admin else 'false' }}" data-privacy-da-accettare="{{ 'true' if privacy_da_accettare else 'false' }}">
+    <div class="top-bar">
+        <a class="brand" href="/timbro">Timbrature</a>
+        {% if is_admin %}
+        <a class="sub" href="/admin/panel" style="color:#EDE7D9; text-decoration:none;">← Torna al pannello admin</a>
+        {% else %}
+        <button type="button" id="chatToggleBtn" class="btn btn-outline btn-small chat-link" style="background:transparent; color:#EDE7D9; border-color:#3A4656;" onclick="apriChatDrawer()">
+            💬 Messaggi<span id="chatBadge" style="display:none;" class="chat-badge">0</span>
+        </button>
+        <a class="sub" href="/richieste" style="color:#EDE7D9; text-decoration:none;">Ferie e permessi</a>
+        <a class="sub" href="/account/password" style="color:#EDE7D9; text-decoration:none;">Cambia password</a>
+        <a class="sub" href="/privacy" style="color:#EDE7D9; text-decoration:none;">Privacy</a>
+        {% endif %}
+        <form action="/logout" method="POST">
+            <button type="submit" class="btn btn-outline btn-small">Esci</button>
+        </form>
+    </div>
+
+    {% if not is_admin %}
+    <div id="privacyOverlay" class="privacy-overlay">
+        <div class="privacy-consenso-box">
+            <div class="privacy-consenso-icona">
+                <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h2>Informativa sulla privacy</h2>
+            <p>Prima di continuare, ti chiediamo di prendere visione dell'informativa sul trattamento dei dati raccolti da Timbrature (timbrature, orari, posizione al momento della timbratura, richieste di ferie/permessi e messaggi in chat).</p>
+            <div class="privacy-consenso-azioni">
+                <a href="/privacy" class="btn btn-outline">Leggi l'informativa completa</a>
+                <button type="button" id="accettaPrivacyBtn" class="btn btn-primary" onclick="accettaPrivacy()">Ho letto e accetto</button>
+            </div>
+            <p id="privacyConsensoErrore" class="privacy-consenso-errore" style="display:none;"></p>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="page">
+        {% if is_admin %}
+        <p style="text-align:center; color: var(--text-dim); font-size:0.85rem; margin-bottom:14px;">
+            Modalità anteprima admin
+        </p>
+        {% endif %}
+
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+        <div class="punch-card">
+            <span id="statusLabel" class="status-label">Caricamento…</span>
+            <span id="timer">00:00:00</span>
+
+            <button id="startBtn" class="btn btn-start" style="display:none;">START</button>
+
+            <div id="controls" style="display: none;">
+                <div class="controls-row">
+                    <button id="pauseBtn" class="btn">PAUSA</button>
+                    <button id="stopBtn" class="btn">STOP</button>
+                </div>
+            </div>
+        </div>
+
+        {% if not is_admin %}
+        <div class="today-panel">
+            <h2 class="panel-title">Timbrature di oggi</h2>
+            <ul id="todayList" class="today-list">
+                <li class="empty-state">Nessuna timbratura registrata oggi.</li>
+            </ul>
+        </div>
+
+        <div class="history-panel">
+            <button id="historyToggle" class="panel-title panel-title-toggle" aria-expanded="false">
+                Storico ultimi 14 giorni <span class="chevron">▾</span>
+            </button>
+            <div id="historyBody" style="display:none;">
+                <table id="historyTable" class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Data</th>
+                            <th>Ore lavorate</th>
+                            <th>Stato</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+                <div id="historyEmpty" class="empty-state" style="display:none;">Nessuna timbratura negli ultimi 14 giorni.</div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if not is_admin %}
+    <div id="chatOverlay" class="chat-drawer-overlay" onclick="if (event.target === this) chiudiChatDrawer();"></div>
+    <div id="chatDrawer" class="chat-drawer">
+        <div class="chat-drawer-header">
+            <span>Messaggi con l'amministratore</span>
+            <button type="button" class="chat-drawer-chiudi" onclick="chiudiChatDrawer()" aria-label="Chiudi chat">×</button>
+        </div>
+        <div class="chat-drawer-body">
+            <div id="chatMessaggi" class="chat-messaggi"></div>
+            <form id="chatForm" class="chat-form">
+                <input type="text" id="chatTesto" name="testo" placeholder="Scrivi un messaggio…" autocomplete="off" required>
+                <button type="submit" class="btn btn-brass">Invia</button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <script>
+        const isAdmin = document.body.dataset.isAdmin === 'true';
+        const privacyDaAccettare = document.body.dataset.privacyDaAccettare === 'true';
+        const privacyOverlay = document.getElementById('privacyOverlay');
+
+        if (privacyOverlay && privacyDaAccettare) {
+            privacyOverlay.classList.add('privacy-overlay-visibile');
+        }
+
+        function accettaPrivacy() {
+            const btn = document.getElementById('accettaPrivacyBtn');
+            const errore = document.getElementById('privacyConsensoErrore');
+            btn.disabled = true;
+            btn.textContent = 'Attendere…';
+
+            fetch('/account/privacy/accetta', { method: 'POST' })
+                .then(r => r.json())
+                .then(dati => {
+                    if (!dati.ok) throw new Error();
+                    privacyOverlay.classList.remove('privacy-overlay-visibile');
+                })
+                .catch(() => {
+                    errore.textContent = 'Non è stato possibile registrare la conferma. Riprova.';
+                    errore.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Ho letto e accetto';
+                });
+        }
+
+        const startBtn = document.getElementById('startBtn');
+        const controls = document.getElementById('controls');
+        const pauseBtn = document.getElementById('pauseBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const timerDisplay = document.getElementById('timer');
+        const statusLabel = document.getElementById('statusLabel');
+        const todayList = document.getElementById('todayList');
+        const toast = document.getElementById('toast');
+        const historyToggle = document.getElementById('historyToggle');
+        const historyBody = document.getElementById('historyBody');
+        const historyTableEl = document.getElementById('historyTable');
+        const historyTable = historyTableEl ? historyTableEl.querySelector('tbody') : null;
+        const historyEmpty = document.getElementById('historyEmpty');
+
+        const chatBadge = document.getElementById('chatBadge');
+        const chatOverlay = document.getElementById('chatOverlay');
+        const chatDrawer = document.getElementById('chatDrawer');
+        const chatMessaggi = document.getElementById('chatMessaggi');
+        const chatForm = document.getElementById('chatForm');
+        const chatTesto = document.getElementById('chatTesto');
+        let chatIntervalId = null;
+
+        let intervalId = null;
+        let secondsElapsed = 0;
+        let stato = 'non_iniziato';
+        let azioneInCorso = false;
+        let historyLoaded = false;
+
+        const ETICHETTE_STATO = {
+            non_iniziato: 'Non hai ancora timbrato oggi',
+            in_corso: 'Al lavoro',
+            in_pausa: 'In pausa',
+            terminato: 'Giornata conclusa',
+            in_ferie: 'Oggi sei in ferie',
+        };
+
+        const ETICHETTE_TIPO = {
+            entrata: 'Entrata',
+            pausa_inizio: 'Inizio pausa',
+            pausa_fine: 'Fine pausa',
+            uscita: 'Uscita',
+        };
+
+        function formatTime(totalSeconds) {
+            const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+            const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+            const s = String(totalSeconds % 60).padStart(2, '0');
+            return `${h}:${m}:${s}`;
+        }
+
+        function formatOre(totalSeconds) {
+            const h = Math.floor(totalSeconds / 3600);
+            const m = Math.floor((totalSeconds % 3600) / 60);
+            return `${h}h ${String(m).padStart(2, '0')}m`;
+        }
+
+        function mostraToast(messaggio, tipo) {
+            toast.textContent = messaggio;
+            toast.className = 'toast toast-' + tipo + ' toast-visible';
+            clearTimeout(mostraToast._t);
+            mostraToast._t = setTimeout(() => {
+                toast.className = 'toast';
+            }, 4000);
+        }
+
+        async function parseRispostaJson(r) {
+            const contentType = r.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                const testo = await r.text();
+                const sembraPaginaErrore = testo.trim().toLowerCase().startsWith('<!doctype')
+                    || testo.trim().toLowerCase().startsWith('<html');
+                if (sembraPaginaErrore) {
+                    throw new Error(
+                        `Il server ha risposto con una pagina HTML invece che JSON (status ${r.status}). ` +
+                        'Probabile causa: app.py non è aggiornato o il server Flask non è stato riavviato dopo le modifiche.'
+                    );
+                }
+                throw new Error(`Risposta inattesa dal server (status ${r.status})`);
+            }
+            return r.json();
+        }
+
+        function stopTimerLocale() {
+            clearInterval(intervalId);
+            intervalId = null;
+        }
+
+        function startTimerLocale() {
+            stopTimerLocale();
+            intervalId = setInterval(() => {
+                secondsElapsed++;
+                timerDisplay.textContent = formatTime(secondsElapsed);
+            }, 1000);
+        }
+
+        function setPulsanti(nuovoStato) {
+            stato = nuovoStato;
+            statusLabel.textContent = ETICHETTE_STATO[nuovoStato] || '';
+
+            startBtn.style.display = 'none';
+            controls.style.display = 'none';
+
+            if (nuovoStato === 'non_iniziato') {
+                startBtn.style.display = 'inline-block';
+            } else if (nuovoStato === 'in_corso') {
+                controls.style.display = 'block';
+                pauseBtn.textContent = 'PAUSA';
+                pauseBtn.disabled = false;
+                stopBtn.disabled = false;
+            } else if (nuovoStato === 'in_pausa') {
+                controls.style.display = 'block';
+                pauseBtn.textContent = 'RIPRENDI';
+                pauseBtn.disabled = false;
+                stopBtn.disabled = false;
+            }
+            // per 'terminato' e 'in_ferie' nessun pulsante viene mostrato
+        }
+
+        function aggiornaListaOggi(timbrature) {
+            todayList.innerHTML = '';
+            if (!timbrature || timbrature.length === 0) {
+                todayList.innerHTML = '<li class="empty-state">Nessuna timbratura registrata oggi.</li>';
+                return;
+            }
+            timbrature.forEach(t => {
+                const li = document.createElement('li');
+                li.className = 'today-item';
+                li.innerHTML = `<span class="today-tipo">${ETICHETTE_TIPO[t.tipo] || t.tipo}</span>
+                                 <span class="today-ora mono">${t.ora}</span>`;
+                todayList.appendChild(li);
+            });
+        }
+
+        function applicaStato(dati) {
+            secondsElapsed = dati.secondi_lavorati || 0;
+            timerDisplay.textContent = formatTime(secondsElapsed);
+            setPulsanti(dati.stato);
+            aggiornaListaOggi(dati.timbrature_oggi);
+
+            stopTimerLocale();
+            if (dati.stato === 'in_corso') {
+                startTimerLocale();
+            }
+        }
+
+        function caricaStato() {
+            fetch('/timbro/stato')
+                .then(parseRispostaJson)
+                .then(dati => {
+                    if (!dati.ok) throw new Error(dati.errore || 'Errore sconosciuto');
+                    applicaStato(dati);
+                })
+                .catch(err => {
+                    statusLabel.textContent = 'Stato non disponibile';
+                    mostraToast(err.message || 'Impossibile contattare il server', 'errore');
+                });
+        }
+
+        function ottieniPosizione() {
+            return new Promise((resolve) => {
+                if (!('geolocation' in navigator)) {
+                    resolve(null);
+                    return;
+                }
+
+                navigator.geolocation.getCurrentPosition(
+                    pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                    () => resolve(null),
+                    { enableHighAccuracy: false, timeout: 2000, maximumAge: 120000 }
+                );
+            });
+        }
+
+        function registraTimbratura(tipo) {
+            if (azioneInCorso) return;
+            azioneInCorso = true;
+            [startBtn, pauseBtn, stopBtn].forEach(b => b && (b.disabled = true));
+
+            ottieniPosizione().then(posizione => {
+                let body = 'tipo=' + encodeURIComponent(tipo);
+                if (posizione) {
+                    body += '&lat=' + encodeURIComponent(posizione.lat) + '&lng=' + encodeURIComponent(posizione.lng);
+                } else if (!isAdmin) {
+                    mostraToast('Posizione non disponibile: timbratura registrata senza geolocalizzazione.', 'info');
+                }
+
+                return fetch('/timbro/azione', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body
+                });
+            })
+                .then(async r => {
+                    const dati = await parseRispostaJson(r);
+                    if (!r.ok || !dati.ok) {
+                        throw new Error(dati.errore || 'Timbratura non registrata');
+                    }
+                    return dati;
+                })
+                .then(dati => {
+                    if (isAdmin) {
+                        mostraToast('Anteprima admin: nessuna timbratura salvata.', 'info');
+                        return;
+                    }
+                    mostraToast(`${ETICHETTE_TIPO[tipo]} registrata alle ${dati.ora}`, 'successo');
+                    historyLoaded = false;
+                    caricaStato();
+                })
+                .catch(err => {
+                    mostraToast(err.message, 'errore');
+                    caricaStato();
+                })
+                .finally(() => {
+                    azioneInCorso = false;
+                    [startBtn, pauseBtn, stopBtn].forEach(b => b && (b.disabled = false));
+                });
+        }
+
+        if (isAdmin) {
+            statusLabel.textContent = 'Anteprima admin (nessuna timbratura viene salvata)';
+            startBtn.style.display = 'inline-block';
+            let inPausaAdmin = false;
+
+            startBtn.addEventListener('click', () => {
+                startBtn.style.display = 'none';
+                controls.style.display = 'block';
+                secondsElapsed = 0;
+                startTimerLocale();
+                registraTimbratura('entrata');
+            });
+
+            pauseBtn.addEventListener('click', () => {
+                if (!inPausaAdmin) {
+                    stopTimerLocale();
+                    pauseBtn.textContent = 'RIPRENDI';
+                    inPausaAdmin = true;
+                    registraTimbratura('pausa_inizio');
+                } else {
+                    startTimerLocale();
+                    pauseBtn.textContent = 'PAUSA';
+                    inPausaAdmin = false;
+                    registraTimbratura('pausa_fine');
+                }
+            });
+
+            stopBtn.addEventListener('click', () => {
+                stopTimerLocale();
+                secondsElapsed = 0;
+                timerDisplay.textContent = '00:00:00';
+                inPausaAdmin = false;
+                pauseBtn.textContent = 'PAUSA';
+                controls.style.display = 'none';
+                startBtn.style.display = 'inline-block';
+                registraTimbratura('uscita');
+            });
+        } else {
+            startBtn.addEventListener('click', () => registraTimbratura('entrata'));
+
+            pauseBtn.addEventListener('click', () => {
+                registraTimbratura(stato === 'in_pausa' ? 'pausa_fine' : 'pausa_inizio');
+            });
+
+            stopBtn.addEventListener('click', () => registraTimbratura('uscita'));
+
+            if (historyToggle) {
+                historyToggle.addEventListener('click', () => {
+                    const aperto = historyBody.style.display !== 'none';
+                    historyBody.style.display = aperto ? 'none' : 'block';
+                    historyToggle.setAttribute('aria-expanded', String(!aperto));
+                    historyToggle.querySelector('.chevron').textContent = aperto ? '▾' : '▴';
+                    if (!aperto && !historyLoaded) {
+                        caricaStorico();
+                    }
+                });
+            }
+
+            caricaStato();
+            aggiornaBadgeChat();
+            setInterval(aggiornaBadgeChat, 15000);
+        }
+
+        function aggiornaBadgeChat() {
+            fetch('/chat/non_lette')
+                .then(r => r.json())
+                .then(dati => {
+                    if (!dati.ok || !chatBadge) return;
+                    if (dati.non_lette > 0) {
+                        chatBadge.textContent = dati.non_lette;
+                        chatBadge.style.display = 'inline-block';
+                    } else {
+                        chatBadge.style.display = 'none';
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function escapeHtml(testo) {
+            const div = document.createElement('div');
+            div.textContent = testo;
+            return div.innerHTML;
+        }
+
+        function renderMessaggiChat(messaggi) {
+            chatMessaggi.innerHTML = '';
+            if (!messaggi || messaggi.length === 0) {
+                chatMessaggi.innerHTML = '<div class="chat-vuota">Nessun messaggio. Scrivi qui se hai bisogno di comunicare qualcosa all\'amministratore.</div>';
+                return;
+            }
+            messaggi.forEach(m => {
+                const div = document.createElement('div');
+                div.className = 'chat-bolla chat-bolla-' + m.mittente;
+                div.innerHTML = escapeHtml(m.testo) + '<span class="chat-bolla-ora">' + m.ora + '</span>';
+                chatMessaggi.appendChild(div);
+            });
+            chatMessaggi.scrollTop = chatMessaggi.scrollHeight;
+        }
+
+        function caricaMessaggiChat() {
+            fetch('/chat/nuovi')
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) renderMessaggiChat(dati.messaggi);
+                    if (chatBadge) chatBadge.style.display = 'none';
+                })
+                .catch(() => {});
+        }
+
+        function apriChatDrawer() {
+            chatOverlay.classList.add('chat-drawer-visibile');
+            chatDrawer.classList.add('chat-drawer-visibile');
+            chatMessaggi.innerHTML = '<div class="chat-vuota">Caricamento…</div>';
+
+            caricaMessaggiChat();
+            clearInterval(chatIntervalId);
+            chatIntervalId = setInterval(caricaMessaggiChat, 5000);
+            setTimeout(() => chatTesto.focus(), 250);
+        }
+
+        function chiudiChatDrawer() {
+            chatOverlay.classList.remove('chat-drawer-visibile');
+            chatDrawer.classList.remove('chat-drawer-visibile');
+            clearInterval(chatIntervalId);
+            chatIntervalId = null;
+        }
+
+        if (chatForm) {
+            chatForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const testo = chatTesto.value.trim();
+                if (!testo) return;
+                chatTesto.disabled = true;
+
+                fetch('/chat/invia', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'testo=' + encodeURIComponent(testo)
+                })
+                    .then(r => r.json())
+                    .then(dati => {
+                        if (dati.ok) {
+                            chatTesto.value = '';
+                            caricaMessaggiChat();
+                        }
+                    })
+                    .finally(() => {
+                        chatTesto.disabled = false;
+                        chatTesto.focus();
+                    });
+            });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && chatDrawer.classList.contains('chat-drawer-visibile')) {
+                    chiudiChatDrawer();
+                }
+            });
+        }
+
+        function caricaStorico() {
+            fetch('/timbro/storico')
+                .then(parseRispostaJson)
+                .then(dati => {
+                    if (!dati.ok) throw new Error(dati.errore || 'Errore nel caricamento dello storico');
+                    historyLoaded = true;
+                    historyTable.innerHTML = '';
+                    if (!dati.giorni || dati.giorni.length === 0) {
+                        historyEmpty.style.display = 'block';
+                        return;
+                    }
+                    historyEmpty.style.display = 'none';
+                    dati.giorni.forEach(g => {
+                        const tr = document.createElement('tr');
+                        const dataFmt = new Date(g.data + 'T00:00:00').toLocaleDateString('it-IT', {
+                            weekday: 'short', day: '2-digit', month: '2-digit'
+                        });
+                        const badge = g.incompleto
+                            ? '<span class="badge-incompleto">incompleta</span>'
+                            : '<span class="badge-completo">completa</span>';
+                        tr.innerHTML = `<td>${dataFmt}</td><td class="mono">${formatOre(g.secondi_lavorati)}</td><td>${badge}</td>`;
+                        historyTable.appendChild(tr);
+                    });
+                })
+                .catch(err => {
+                    mostraToast(err.message, 'errore');
+                });
+        }
+    </script>
+</body>
+</html>

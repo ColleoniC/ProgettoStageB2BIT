@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pannello Admin</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+        <span class="sub">{{ admin_name }}</span>
+    </div>
+
+    <div class="page wide">
+        <div class="actions-row">
+            <h1 style="margin:0;">Utenti</h1>
+            <div style="display:flex; gap:10px;">
+                <button type="button" class="btn btn-outline notifiche-toggle" onclick="apriNotifiche()">
+                    🔔 Notifiche
+                    {% if notifiche_non_lette > 0 %}
+                    <span class="badge-non-lette">{{ notifiche_non_lette }}</span>
+                    {% endif %}
+                </button>
+                <a class="btn btn-brass" href="/admin/create_user">+ Crea utente</a>
+                <a class="btn btn-outline" href="/privacy">Privacy</a>
+                <form action="/logout" method="POST">
+                    <button type="submit" class="btn btn-outline">Esci</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="notifiche-panel">
+            <div class="notifiche-header">
+                <h2>
+                    Richieste ferie e permessi
+                    {% if richieste_in_attesa %}
+                    <span class="badge-non-lette">{{ richieste_in_attesa|length }}</span>
+                    {% endif %}
+                </h2>
+            </div>
+
+            {% if richieste_in_attesa %}
+            <p class="richieste-avviso">Hai ancora {{ richieste_in_attesa|length }} richieste a cui rispondere</p>
+            <ul class="notifiche-lista">
+                {% for r in richieste_in_attesa %}
+                <li class="notifica notifica-richiesta in-evidenza">
+                    <span class="notifica-punto"></span>
+                    <span class="notifica-messaggio">
+                        <strong>{{ r.name }} {{ r.cognome }}</strong> —
+                        {{ 'Ferie' if r.tipo == 'ferie' else 'Permesso' }}
+                        {% if r.data_inizio == r.data_fine %}
+                            il {{ r.data_inizio }}
+                        {% else %}
+                            dal {{ r.data_inizio }} al {{ r.data_fine }}
+                        {% endif %}
+                        {% if r.tipo == 'permesso' and r.ora_inizio and r.ora_fine %}
+                            (inizio alle {{ r.ora_inizio }} e fine alle {{ r.ora_fine }})
+                        {% endif %}
+                        {% if r.motivo %}<span style="color: var(--text-dim);"> — {{ r.motivo }}</span>{% endif %}
+                    </span>
+                    <form action="/admin/richieste/{{ r.id }}/approva" method="POST" class="notifica-segnala-form">
+                        <button type="submit" class="btn-segnala">Approva</button>
+                    </form>
+                    <form action="/admin/richieste/{{ r.id }}/rifiuta" method="POST" class="notifica-elimina-form">
+                        <button type="submit" class="btn btn-danger btn-small">Rifiuta</button>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">Nessuna richiesta in attesa.</div>
+            {% endif %}
+
+            {% if richieste_gestite %}
+            <details style="margin-top:14px;">
+                <summary style="cursor:pointer; color: var(--text-dim); font-size:0.85rem;">Storico richieste gestite</summary>
+                <ul class="notifiche-lista" style="margin-top:8px;">
+                    {% for r in richieste_gestite %}
+                    <li class="notifica">
+                        <span class="notifica-punto"></span>
+                        <span class="notifica-messaggio">
+                            <strong>{{ r.name }} {{ r.cognome }}</strong> —
+                            {{ 'Ferie' if r.tipo == 'ferie' else 'Permesso' }}
+                            {% if r.data_inizio == r.data_fine %}
+                                il {{ r.data_inizio }}
+                            {% else %}
+                                dal {{ r.data_inizio }} al {{ r.data_fine }}
+                            {% endif %}
+                            {% if r.tipo == 'permesso' and r.ora_inizio and r.ora_fine %}
+                                (inizio alle {{ r.ora_inizio }} e fine alle {{ r.ora_fine }})
+                            {% endif %}
+                        </span>
+                        {% if r.stato == 'approvata' %}
+                        <span class="badge-segnalata">Approvata</span>
+                        {% else %}
+                        <span class="badge-incompleto">Rifiutata</span>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </details>
+            {% endif %}
+        </div>
+
+        <h2 class="section-title">Utenti</h2>
+        {% if users %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Cognome</th>
+                    <th>Entrata</th>
+                    <th>Inizio pausa</th>
+                    <th>Fine pausa</th>
+                    <th>Uscita</th>
+                    <th>Posizione</th>
+                    <th>Messaggi</th>
+                    <th>Azioni</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.name }}</td>
+                    <td>{{ user.cognome }}</td>
+                    <td class="mono">{{ user.orario_inizio or '—' }}</td>
+                    <td class="mono">{{ user.orario_pausa_inizio or '—' }}</td>
+                    <td class="mono">{{ user.orario_pausa_fine or '—' }}</td>
+                    <td class="mono">{{ user.orario_fine or '—' }}</td>
+                    <td>
+                        <button type="button" class="notifica-posizione" data-user-id="{{ user.id }}" onclick="apriPosizioneUtente(this)">📍 Vedi</button>
+                    </td>
+                    <td>
+                        <button type="button" class="btn btn-outline btn-small chat-link"
+                                data-user-id="{{ user.id }}"
+                                data-user-nome="{{ user.name }} {{ user.cognome }}"
+                                onclick="apriChat(this)">
+                            💬 Chat
+                            <span class="chat-badge" data-badge-user="{{ user.id }}" {% if not user.messaggi_non_letti %}style="display:none;"{% endif %}>{{ user.messaggi_non_letti or 0 }}</span>
+                        </button>
+                    </td>
+                    <td class="actions-cell">
+                        <a class="btn btn-outline btn-small" href="/admin/modifica/{{ user.id }}">Modifica</a>
+                        <form action="/admin/elimina/{{ user.id }}" method="POST"
+                              onsubmit="return confirm('Eliminare {{ user.name }} {{ user.cognome }}?');">
+                            <button type="submit" class="btn btn-danger">Elimina</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">Nessun utente registrato!</div>
+        {% endif %}
+
+        <h2 class="section-title" style="margin-top:28px;">Calendario ferie e permessi</h2>
+        <div class="calendario-box">
+            <div class="calendario-header">
+                <button type="button" class="calendario-nav" id="calMesePrec" aria-label="Mese precedente">‹</button>
+                <h3 id="calTitolo">—</h3>
+                <button type="button" class="calendario-nav" id="calMeseSucc" aria-label="Mese successivo">›</button>
+            </div>
+            <div class="calendario-griglia" id="calGriglia"></div>
+            <div class="calendario-legenda">
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--paper); border:1px solid var(--border);"></span> Weekend</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--alert); border-radius:50%;"></span> Ferie (numero assenti)</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--ink); border-radius:50%;"></span> Permesso (numero assenti)</span>
+            </div>
+
+            <div class="calendario-dettaglio-giorno" id="calDettaglio" style="display:none;">
+                <h4 id="calDettaglioTitolo">—</h4>
+                <ul class="calendario-dettaglio-lista" id="calDettaglioLista"></ul>
+            </div>
+        </div>
+    </div>
+    <div id="notificheOverlay" class="notifiche-overlay" onclick="if (event.target === this) chiudiNotifiche();">
+        <div class="notifiche-modal" id="notificheModal">
+            <div class="notifiche-modal-header">
+                <span>Notifiche</span>
+                <div class="modal-header-azioni">
+                    <button type="button" class="mappa-ingrandisci" id="notificheIngrandisciBtn" onclick="toggleIngrandisciNotifiche()" aria-label="Ingrandisci notifiche" title="Ingrandisci">⤢</button>
+                    <button type="button" class="mappa-chiudi" onclick="chiudiNotifiche()" aria-label="Chiudi notifiche">×</button>
+                </div>
+            </div>
+            <div class="notifiche-modal-body">
+                <div class="notifiche-header">
+                    <div style="display:flex; gap:8px; margin-left:auto;">
+                        {% if notifiche_non_lette > 0 %}
+                        <form action="/admin/notifiche/segna_lette" method="POST">
+                            <button type="submit" class="btn btn-outline btn-small">Segna tutte come lette</button>
+                        </form>
+                        {% endif %}
+                        {% if notifiche %}
+                        <form action="/admin/notifiche/elimina_tutte" method="POST"
+                              onsubmit="return confirm('Eliminare tutte le notifiche? L\'azione non è reversibile.');">
+                            <button type="submit" class="btn btn-danger btn-small">Elimina tutte</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if notifiche %}
+                <ul class="notifiche-lista">
+                    {% for n in notifiche %}
+                    <li class="notifica notifica-{{ n.tipo }} {{ 'non-letta' if not n.letta else '' }}">
+                        <span class="notifica-punto"></span>
+                        <span class="notifica-messaggio">{{ n.messaggio }}</span>
+                        {% if n.lat and n.lng %}
+                        <button type="button" class="notifica-posizione" data-lat="{{ n.lat }}" data-lng="{{ n.lng }}" onclick="apriMappaDaBottone(this)">📍 Posizione</button>
+                        {% endif %}
+                        <span class="notifica-ora mono">{{ n.creato_il[11:16] if n.creato_il|length > 15 else n.creato_il }}</span>
+                        {% if n.user_id and n.tipo in ['alert', 'assenza', 'straordinario', 'monte_ore'] %}
+                            {% if n.segnalata %}
+                            <span class="badge-segnalata">Segnalata</span>
+                            {% else %}
+                            <form action="/admin/notifiche/{{ n.id }}/segnala" method="POST" class="notifica-segnala-form"
+                                  onsubmit="return confirm('Inviare una segnalazione al dipendente in chat?');">
+                                <button type="submit" class="btn-segnala">Invia segnalazione</button>
+                            </form>
+                            {% endif %}
+                        {% endif %}
+                        <form action="/admin/notifiche/elimina/{{ n.id }}" method="POST" class="notifica-elimina-form">
+                            <button type="submit" class="btn-elimina-notifica" title="Elimina notifica" aria-label="Elimina notifica">×</button>
+                        </form>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="empty-state">Nessuna notifica al momento.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div id="mappaOverlay" class="mappa-overlay" onclick="if (event.target === this) chiudiMappa();">
+        <div class="mappa-box" id="mappaBox">
+            <div class="mappa-box-header">
+                <span id="mappaTitolo">Posizione timbratura</span>
+                <div class="modal-header-azioni">
+                    <button type="button" class="mappa-ingrandisci" id="mappaIngrandisciBtn" onclick="toggleIngrandisciMappa()" aria-label="Ingrandisci mappa" title="Ingrandisci">⤢</button>
+                    <button type="button" class="mappa-chiudi" onclick="chiudiMappa()" aria-label="Chiudi mappa">×</button>
+                </div>
+            </div>
+            <div id="mappaDettaglio" class="mappa-box-dettaglio" style="display:none;"></div>
+            <div id="mappaLeaflet"></div>
+        </div>
+    </div>
+
+    <div id="chatOverlay" class="chat-drawer-overlay" onclick="if (event.target === this) chiudiChat();"></div>
+    <div id="chatDrawer" class="chat-drawer">
+        <div class="chat-drawer-header">
+            <span id="chatDrawerTitolo">Chat</span>
+            <button type="button" class="chat-drawer-chiudi" onclick="chiudiChat()" aria-label="Chiudi chat">×</button>
+        </div>
+        <div class="chat-drawer-body">
+            <div id="chatMessaggi" class="chat-messaggi"></div>
+            <form id="chatForm" class="chat-form">
+                <input type="text" id="chatTesto" name="testo" placeholder="Scrivi un messaggio…" autocomplete="off" required>
+                <button type="submit" class="btn btn-brass">Invia</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const SEDE_B2BIT = {
+            lat: 45.65429144645543,
+            lng: 9.605269680093217,
+            indirizzo: 'Via Umberto I, 20, 24044 Dalmine BG',
+            mapsUrl: 'https://www.google.com/maps/place//data=!4m2!3m1!1s0x47815101ac3bad1f:0x9d70003655228375?sa=X&ved=1t:8290&ictx=111'
+        };
+
+        let mappaLeaflet = null;
+        let marcatoreSede = null;
+        let marcatoreDipendente = null;
+
+        function iconaMarcatore(colore) {
+            return L.divIcon({
+                className: '',
+                html: `<div style="background:${colore}; width:16px; height:16px; border-radius:50%; border:2px solid #fff; box-shadow:0 1px 4px rgba(0,0,0,0.4);"></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+        }
+
+        function inizializzaMappa() {
+            if (mappaLeaflet) return mappaLeaflet;
+
+            mappaLeaflet = L.map('mappaLeaflet');
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(mappaLeaflet);
+
+            marcatoreSede = L.marker([SEDE_B2BIT.lat, SEDE_B2BIT.lng], { icon: iconaMarcatore('#C98A3B') })
+                .addTo(mappaLeaflet)
+                .bindPopup(`<strong>B2BIT</strong><br>${SEDE_B2BIT.indirizzo}<br><a href="${SEDE_B2BIT.mapsUrl}" target="_blank" rel="noopener">Apri in Google Maps</a>`)
+                .bindTooltip('B2BIT', { permanent: true, direction: 'top', offset: [0, -8], className: 'mappa-tooltip-sede' });
+
+            return mappaLeaflet;
+        }
+
+        function apriMappaDaBottone(btn) {
+            const lat = parseFloat(btn.dataset.lat);
+            const lng = parseFloat(btn.dataset.lng);
+            if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+            document.getElementById('mappaTitolo').textContent = 'Posizione timbratura';
+            document.getElementById('mappaDettaglio').style.display = 'none';
+            apriMappa(lat, lng, 'Dipendente');
+        }
+
+        function apriPosizioneUtente(btn) {
+            const userId = btn.dataset.userId;
+            const testoOriginale = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '⏳ …';
+
+            fetch(`/admin/utente/${userId}/posizione`)
+                .then(r => r.json())
+                .then(dati => {
+                    if (!dati.ok) {
+                        mostraToastPosizione(dati.errore || 'Nessuna posizione disponibile per questo dipendente');
+                        return;
+                    }
+                    const dettaglio = document.getElementById('mappaDettaglio');
+                    dettaglio.textContent = `${dati.nome_completo} — ${dati.tipo} del ${dati.data} alle ${dati.ora}`;
+                    dettaglio.style.display = 'block';
+                    document.getElementById('mappaTitolo').textContent = 'Posizione attuale (dipendente al lavoro)';
+                    apriMappa(dati.lat, dati.lng, dati.nome_completo);
+                })
+                .catch(() => mostraToastPosizione('Errore nel recupero della posizione'))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = testoOriginale;
+                });
+        }
+
+        function mostraToastPosizione(messaggio) {
+            alert(messaggio);
+        }
+
+        function apriMappa(lat, lng, etichettaDipendente) {
+            document.getElementById('mappaOverlay').classList.add('mappa-visibile');
+
+            const mappa = inizializzaMappa();
+
+            if (marcatoreDipendente) {
+                mappa.removeLayer(marcatoreDipendente);
+            }
+            marcatoreDipendente = L.marker([lat, lng], { icon: iconaMarcatore('#8B3A3A') })
+                .addTo(mappa)
+                .bindPopup(etichettaDipendente || 'Dipendente')
+                .bindTooltip(etichettaDipendente || 'Dipendente', { permanent: true, direction: 'top', offset: [0, -8] });
+
+            const gruppo = L.featureGroup([marcatoreSede, marcatoreDipendente]);
+
+            setTimeout(() => {
+                mappa.invalidateSize();
+                mappa.fitBounds(gruppo.getBounds().pad(0.35));
+            }, 50);
+        }
+
+        function chiudiMappa() {
+            document.getElementById('mappaOverlay').classList.remove('mappa-visibile');
+            document.getElementById('mappaDettaglio').style.display = 'none';
+            const box = document.getElementById('mappaBox');
+            const btn = document.getElementById('mappaIngrandisciBtn');
+            box.classList.remove('modal-ingrandito');
+            btn.textContent = '⤢';
+            btn.title = 'Ingrandisci';
+            btn.setAttribute('aria-label', 'Ingrandisci mappa');
+        }
+
+        function apriNotifiche() {
+            document.getElementById('notificheOverlay').classList.add('notifiche-visibile');
+        }
+
+        function chiudiNotifiche() {
+            document.getElementById('notificheOverlay').classList.remove('notifiche-visibile');
+            const modal = document.getElementById('notificheModal');
+            const btn = document.getElementById('notificheIngrandisciBtn');
+            modal.classList.remove('modal-ingrandito');
+            btn.textContent = '⤢';
+            btn.title = 'Ingrandisci';
+            btn.setAttribute('aria-label', 'Ingrandisci notifiche');
+        }
+
+        function toggleIngrandisciNotifiche() {
+            const modal = document.getElementById('notificheModal');
+            const btn = document.getElementById('notificheIngrandisciBtn');
+            const ingrandito = modal.classList.toggle('modal-ingrandito');
+            btn.textContent = ingrandito ? '⤡' : '⤢';
+            btn.title = ingrandito ? 'Ripristina dimensione' : 'Ingrandisci';
+            btn.setAttribute('aria-label', ingrandito ? 'Ripristina dimensione notifiche' : 'Ingrandisci notifiche');
+        }
+
+        function toggleIngrandisciMappa() {
+            const box = document.getElementById('mappaBox');
+            const btn = document.getElementById('mappaIngrandisciBtn');
+            const ingrandito = box.classList.toggle('modal-ingrandito');
+            btn.textContent = ingrandito ? '⤡' : '⤢';
+            btn.title = ingrandito ? 'Ripristina dimensione' : 'Ingrandisci';
+            btn.setAttribute('aria-label', ingrandito ? 'Ripristina dimensione mappa' : 'Ingrandisci mappa');
+            setTimeout(() => {
+                if (mappaLeaflet) mappaLeaflet.invalidateSize();
+            }, 220);
+        }
+
+        let chatUserIdAperto = null;
+        let chatIntervalId = null;
+        const chatOverlay = document.getElementById('chatOverlay');
+        const chatDrawer = document.getElementById('chatDrawer');
+        const chatDrawerTitolo = document.getElementById('chatDrawerTitolo');
+        const chatMessaggi = document.getElementById('chatMessaggi');
+        const chatForm = document.getElementById('chatForm');
+        const chatTesto = document.getElementById('chatTesto');
+
+        function escapeHtml(testo) {
+            const div = document.createElement('div');
+            div.textContent = testo;
+            return div.innerHTML;
+        }
+
+        function renderMessaggiChat(messaggi) {
+            chatMessaggi.innerHTML = '';
+            if (!messaggi || messaggi.length === 0) {
+                chatMessaggi.innerHTML = '<div class="chat-vuota">Nessun messaggio con questo dipendente.</div>';
+                return;
+            }
+            messaggi.forEach(m => {
+                const div = document.createElement('div');
+                div.className = 'chat-bolla chat-bolla-' + m.mittente;
+                div.innerHTML = escapeHtml(m.testo) + '<span class="chat-bolla-ora">' + m.ora + '</span>';
+                chatMessaggi.appendChild(div);
+            });
+            chatMessaggi.scrollTop = chatMessaggi.scrollHeight;
+        }
+
+        function caricaMessaggiChat() {
+            if (chatUserIdAperto === null) return;
+            fetch(`/admin/chat/${chatUserIdAperto}/nuovi`)
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) renderMessaggiChat(dati.messaggi);
+                })
+                .catch(() => {});
+        }
+
+        function apriChat(bottone) {
+            const userId = parseInt(bottone.dataset.userId, 10);
+            const nomeCompleto = bottone.dataset.userNome;
+
+            chatUserIdAperto = userId;
+            chatDrawerTitolo.textContent = 'Chat con ' + nomeCompleto;
+            chatOverlay.classList.add('chat-drawer-visibile');
+            chatDrawer.classList.add('chat-drawer-visibile');
+            chatMessaggi.innerHTML = '<div class="chat-vuota">Caricamento…</div>';
+
+            const badge = bottone.querySelector('.chat-badge');
+            if (badge) badge.style.display = 'none';
+
+            caricaMessaggiChat();
+            clearInterval(chatIntervalId);
+            chatIntervalId = setInterval(caricaMessaggiChat, 5000);
+            setTimeout(() => chatTesto.focus(), 250);
+        }
+
+        function chiudiChat() {
+            chatOverlay.classList.remove('chat-drawer-visibile');
+            chatDrawer.classList.remove('chat-drawer-visibile');
+            clearInterval(chatIntervalId);
+            chatIntervalId = null;
+            chatUserIdAperto = null;
+        }
+
+        chatForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            if (chatUserIdAperto === null) return;
+            const testo = chatTesto.value.trim();
+            if (!testo) return;
+            chatTesto.disabled = true;
+
+            fetch(`/admin/chat/${chatUserIdAperto}/invia`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'testo=' + encodeURIComponent(testo)
+            })
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) {
+                        chatTesto.value = '';
+                        caricaMessaggiChat();
+                    }
+                })
+                .finally(() => {
+                    chatTesto.disabled = false;
+                    chatTesto.focus();
+                });
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            if (chatUserIdAperto !== null) chiudiChat();
+            if (document.getElementById('notificheOverlay').classList.contains('notifiche-visibile')) chiudiNotifiche();
+        });
+
+        // --- Calendario ferie e permessi (vista admin, tutti i dipendenti) ---
+        const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+        const GIORNI_LABEL = ['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
+
+        const calTitolo = document.getElementById('calTitolo');
+        const calGriglia = document.getElementById('calGriglia');
+        const calMesePrec = document.getElementById('calMesePrec');
+        const calMeseSucc = document.getElementById('calMeseSucc');
+        const calDettaglio = document.getElementById('calDettaglio');
+        const calDettaglioTitolo = document.getElementById('calDettaglioTitolo');
+        const calDettaglioLista = document.getElementById('calDettaglioLista');
+
+        const oggiCal = new Date();
+        let calMese = oggiCal.getMonth();
+        let calAnno = oggiCal.getFullYear();
+        let calEventi = [];
+        let calGiornoSelezionato = null;
+
+        function calToIso(y, m, d) {
+            return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+
+        function calEventiDelGiorno(dataIso) {
+            return calEventi.filter(ev => dataIso >= ev.data_inizio && dataIso <= ev.data_fine);
+        }
+
+        function calFormattaDataIt(iso) {
+            const [y, m, d] = iso.split('-');
+            return `${d}/${m}/${y}`;
+        }
+
+        function calMostraDettaglioGiorno(dataIso) {
+            const eventiGiorno = calEventiDelGiorno(dataIso);
+            calGiornoSelezionato = dataIso;
+            renderCalAdmin();
+
+            if (eventiGiorno.length === 0) {
+                calDettaglio.style.display = 'none';
+                return;
+            }
+
+            calDettaglioTitolo.textContent = `${calFormattaDataIt(dataIso)} — ${eventiGiorno.length} dipendent${eventiGiorno.length > 1 ? 'i' : 'e'} assent${eventiGiorno.length > 1 ? 'i' : 'e'}`;
+            calDettaglioLista.innerHTML = '';
+            eventiGiorno.forEach(ev => {
+                const li = document.createElement('li');
+                li.className = 'calendario-dettaglio-voce';
+                let testo = `<strong>${ev.nome}</strong> — ${ev.tipo === 'ferie' ? 'Ferie' : 'Permesso'}`;
+                if (ev.tipo === 'permesso' && ev.ora_inizio && ev.ora_fine) {
+                    testo += ` (dalle ${ev.ora_inizio} alle ${ev.ora_fine})`;
+                }
+                li.innerHTML = testo;
+                calDettaglioLista.appendChild(li);
+            });
+            calDettaglio.style.display = 'block';
+        }
+
+        function renderCalAdmin() {
+            calTitolo.textContent = `${MESI[calMese]} ${calAnno}`;
+            calGriglia.innerHTML = '';
+
+            GIORNI_LABEL.forEach(g => {
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno-label';
+                el.textContent = g;
+                calGriglia.appendChild(el);
+            });
+
+            const primoGiorno = new Date(calAnno, calMese, 1);
+            let offset = primoGiorno.getDay() - 1;
+            if (offset < 0) offset = 6;
+
+            const giorniNelMese = new Date(calAnno, calMese + 1, 0).getDate();
+            const giorniMesePrec = new Date(calAnno, calMese, 0).getDate();
+
+            for (let i = 0; i < offset; i++) {
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno fuori-mese';
+                const testata = document.createElement('div');
+                testata.className = 'calendario-giorno-testata';
+                const numero = document.createElement('span');
+                numero.className = 'calendario-giorno-numero';
+                numero.textContent = giorniMesePrec - offset + i + 1;
+                testata.appendChild(numero);
+                el.appendChild(testata);
+                calGriglia.appendChild(el);
+            }
+
+            const MAX_TARGHETTE = 3;
+
+            for (let d = 1; d <= giorniNelMese; d++) {
+                const dataIso = calToIso(calAnno, calMese, d);
+                const dataObj = new Date(calAnno, calMese, d);
+                const giornoSettimana = dataObj.getDay();
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno';
+
+                const isOggi = dataIso === calToIso(oggiCal.getFullYear(), oggiCal.getMonth(), oggiCal.getDate());
+                if (isOggi) el.classList.add('oggi');
+
+                const testata = document.createElement('div');
+                testata.className = 'calendario-giorno-testata';
+                const numero = document.createElement('span');
+                numero.className = 'calendario-giorno-numero';
+                numero.textContent = d;
+                testata.appendChild(numero);
+
+                const eventiGiorno = calEventiDelGiorno(dataIso);
+                const ferieGiorno = eventiGiorno.filter(ev => ev.tipo === 'ferie');
+                const permessoGiorno = eventiGiorno.filter(ev => ev.tipo === 'permesso');
+
+                if (eventiGiorno.length > 0) {
+                    el.classList.add('cliccabile');
+
+                    const pallini = document.createElement('span');
+                    pallini.className = 'calendario-giorno-pallini';
+                    if (ferieGiorno.length > 0) {
+                        const pallinoFerie = document.createElement('span');
+                        pallinoFerie.className = 'calendario-pallino calendario-pallino-ferie';
+                        pallinoFerie.textContent = ferieGiorno.length;
+                        pallini.appendChild(pallinoFerie);
+                    }
+                    if (permessoGiorno.length > 0) {
+                        const pallinoPermesso = document.createElement('span');
+                        pallinoPermesso.className = 'calendario-pallino calendario-pallino-permesso';
+                        pallinoPermesso.textContent = permessoGiorno.length;
+                        pallini.appendChild(pallinoPermesso);
+                    }
+                    testata.appendChild(pallini);
+                    el.appendChild(testata);
+
+                    const tagLista = document.createElement('div');
+                    tagLista.className = 'calendario-giorno-tag-lista';
+                    eventiGiorno.slice(0, MAX_TARGHETTE).forEach(ev => {
+                        const tag = document.createElement('span');
+                        tag.className = `calendario-tag calendario-tag-${ev.tipo}`;
+                        tag.textContent = ev.nome;
+                        tag.title = ev.nome;
+                        tagLista.appendChild(tag);
+                    });
+                    if (eventiGiorno.length > MAX_TARGHETTE) {
+                        const altri = document.createElement('span');
+                        altri.className = 'calendario-tag-more';
+                        altri.textContent = `+${eventiGiorno.length - MAX_TARGHETTE} altri`;
+                        tagLista.appendChild(altri);
+                    }
+                    el.appendChild(tagLista);
+
+                    el.addEventListener('click', () => calMostraDettaglioGiorno(dataIso));
+                } else {
+                    if (giornoSettimana === 0 || giornoSettimana === 6) {
+                        el.classList.add('riposo');
+                    }
+                    el.appendChild(testata);
+                }
+
+                if (dataIso === calGiornoSelezionato) el.classList.add('selezionato');
+
+                calGriglia.appendChild(el);
+            }
+        }
+
+        function calCaricaEventi() {
+            fetch('/admin/calendario/eventi')
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) calEventi = dati.eventi;
+                    renderCalAdmin();
+                })
+                .catch(() => renderCalAdmin());
+        }
+
+        calMesePrec.addEventListener('click', () => {
+            calMese--;
+            if (calMese < 0) { calMese = 11; calAnno--; }
+            calGiornoSelezionato = null;
+            calDettaglio.style.display = 'none';
+            renderCalAdmin();
+        });
+        calMeseSucc.addEventListener('click', () => {
+            calMese++;
+            if (calMese > 11) { calMese = 0; calAnno++; }
+            calGiornoSelezionato = null;
+            calDettaglio.style.display = 'none';
+            renderCalAdmin();
+        });
+
+        calCaricaEventi();
+    </script>
+</body>
+</html>

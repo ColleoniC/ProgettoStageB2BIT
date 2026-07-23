@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Modifica utente</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="top-bar">
+        <a class="brand" href="/admin/panel">Timbrature <span class="sub">admin</span></a>
+    </div>
+
+    <div class="page wide">
+        <div class="card">
+            <h1>Modifica utente</h1>
+            <p>Aggiorna i dati anagrafici e l'orario previsto.</p>
+
+            <form action="/admin/modifica/{{ user.id }}" method="POST">
+                <div class="field-row">
+                    <label class="field">Nome
+                        <input type="text" name="nome" value="{{ user.name }}" required>
+                    </label>
+                    <label class="field">Cognome
+                        <input type="text" name="cognome" value="{{ user.cognome }}" required>
+                    </label>
+                </div>
+
+                <label class="field">Email
+                    <input type="email" name="email" value="{{ user.email }}" required>
+                </label>
+
+                <div class="field-row">
+                    <label class="field">Orario di inizio
+                        <input type="time" name="orario_inizio" value="{{ user.orario_inizio }}">
+                    </label>
+                    <label class="field">Orario di fine
+                        <input type="time" name="orario_fine" value="{{ user.orario_fine }}">
+                    </label>
+                </div>
+
+                <div class="field-row">
+                    <label class="field">Inizio pausa pranzo
+                        <input type="time" name="orario_pausa_inizio" value="{{ user.orario_pausa_inizio }}">
+                    </label>
+                    <label class="field">Fine pausa pranzo
+                        <input type="time" name="orario_pausa_fine" value="{{ user.orario_pausa_fine }}">
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Salva modifiche</button>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h1 style="font-size:1.2rem;">Modifica orario per un giorno specifico</h1>
+            <p>Imposta un orario diverso da quello standard per una singola data (es. turno straordinario concordato, uscita anticipata, mezza giornata). Lascia vuoto un campo per usare l'orario standard su quel campo.</p>
+
+            <form action="/admin/orario_giornaliero/{{ user.id }}" method="POST">
+                <label class="field">Data
+                    <input type="date" name="data" min="{{ oggi }}" required>
+                </label>
+
+                <div class="field-row">
+                    <label class="field">Orario di inizio
+                        <input type="time" name="orario_inizio">
+                    </label>
+                    <label class="field">Orario di fine
+                        <input type="time" name="orario_fine">
+                    </label>
+                </div>
+
+                <div class="field-row">
+                    <label class="field">Inizio pausa pranzo
+                        <input type="time" name="orario_pausa_inizio">
+                    </label>
+                    <label class="field">Fine pausa pranzo
+                        <input type="time" name="orario_pausa_fine">
+                    </label>
+                </div>
+
+                <label class="field">Nota (facoltativa)
+                    <input type="text" name="note" placeholder="Es. Turno di copertura, uscita anticipata concordata…">
+                </label>
+
+                <button type="submit" class="btn btn-brass">Salva orario per quel giorno</button>
+            </form>
+
+            {% if orari_giornalieri %}
+            <h2 class="section-title" style="margin-top:26px;">Prossime modifiche giornaliere</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Entrata</th>
+                        <th>Uscita</th>
+                        <th>Permesso</th>
+                        <th>Nota</th>
+                        <th>Azioni</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for o in orari_giornalieri %}
+                    <tr>
+                        <td class="mono">{{ o.data }}</td>
+                        <td class="mono">{{ o.orario_inizio or '—' }}</td>
+                        <td class="mono">{{ o.orario_fine or '—' }}</td>
+                        <td class="mono">{{ (o.permesso_inizio + '–' + o.permesso_fine) if o.permesso_inizio and o.permesso_fine else '—' }}</td>
+                        <td>{{ o.note or '—' }}</td>
+                        <td class="actions-cell">
+                            <form action="/admin/orario_giornaliero/{{ user.id }}/elimina/{{ o.data }}" method="POST"
+                                  onsubmit="return confirm('Rimuovere la modifica per il {{ o.data }}? Tornerà l\'orario standard.');">
+                                <button type="submit" class="btn btn-danger">Rimuovi</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">Nessuna modifica giornaliera programmata per questo dipendente.</div>
+            {% endif %}
+        </div>
+
+        <div class="links">
+            <a href="/admin/panel">← Torna al pannello</a>
+        </div>
+    </div>
+</body>
+</html>

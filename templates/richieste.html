@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ferie, permessi e calendario</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="top-bar">
+        <a class="brand" href="/timbro">Timbrature</a>
+        <span class="sub">Ferie, permessi e calendario</span>
+        <a href="/timbro" style="color:#EDE7D9; text-decoration:none; font-size:0.85rem;">← Torna alla timbratura</a>
+    </div>
+
+    <div class="page">
+        <div class="card">
+            <h1>Richiedi ferie o permesso</h1>
+            <p>Invia una richiesta all'amministratore. Riceverai una risposta in chat non appena verrà gestita.</p>
+
+            {% with messaggi_sovrapposizione = get_flashed_messages(category_filter=['sovrapposizione']) %}
+            {% if messaggi_sovrapposizione %}
+            <p class="richieste-avviso">⚠️ {{ messaggi_sovrapposizione[0] }}</p>
+            {% endif %}
+            {% endwith %}
+
+            <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+            <form id="richiestaForm" action="/richieste/nuova" method="POST" novalidate
+                  data-orario-inizio="{{ utente.orario_inizio if utente and utente.orario_inizio else '' }}"
+                  data-orario-fine="{{ utente.orario_fine if utente and utente.orario_fine else '' }}">
+                <div class="richiesta-tabs" role="tablist">
+                    <button type="button" class="richiesta-tab attiva" data-tipo="ferie">Ferie</button>
+                    <button type="button" class="richiesta-tab" data-tipo="permesso">Permesso</button>
+                </div>
+                <input type="hidden" name="tipo" id="tipoInput" value="ferie">
+
+                <div class="field-row">
+                    <label class="field">Dal
+                        <input type="date" name="data_inizio" id="dataInizio" required>
+                    </label>
+                    <label class="field">Al
+                        <input type="date" name="data_fine" id="dataFine">
+                    </label>
+                </div>
+
+                <div class="field-row" id="orarioPermessoRow" style="display:none;">
+                    <label class="field">Ora di inizio
+                        <input type="time" name="ora_inizio" id="oraInizio">
+                    </label>
+                    <label class="field">Ora di fine
+                        <input type="time" name="ora_fine" id="oraFine">
+                    </label>
+                </div>
+                {% if utente and utente.orario_inizio and utente.orario_fine %}
+                <p id="orarioLavoroInfo" class="hint" style="display:none; color: var(--text-dim); font-size:0.85rem; margin:-6px 0 14px;">
+                    Il permesso deve rientrare nel tuo orario di lavoro standard: {{ utente.orario_inizio }}–{{ utente.orario_fine }}. Se per quel giorno hai un orario diverso da quello standard, la richiesta verrà comunque verificata su quello.
+                </p>
+                {% endif %}
+
+                <label class="field">Motivo (facoltativo)
+                    <input type="text" name="motivo" placeholder="Es. Visita medica, viaggio, motivi personali…">
+                </label>
+
+                <button type="submit" class="btn btn-primary">Invia richiesta</button>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h1 style="font-size:1.2rem;">Le tue richieste</h1>
+            {% if richieste %}
+            <ul class="richieste-lista">
+                {% for r in richieste %}
+                <li class="richiesta-item">
+                    <span class="richiesta-tipo">{{ 'Ferie' if r.tipo == 'ferie' else 'Permesso' }}</span>
+                    <span class="richiesta-periodo">
+                        {% if r.data_inizio == r.data_fine %}
+                            il {{ r.data_inizio }}
+                        {% else %}
+                            dal {{ r.data_inizio }} al {{ r.data_fine }}
+                        {% endif %}
+                        {% if r.tipo == 'permesso' and r.ora_inizio and r.ora_fine %}
+                            (dalle {{ r.ora_inizio }} alle {{ r.ora_fine }})
+                        {% endif %}
+                    </span>
+                    <span class="badge-stato badge-stato-{{ r.stato }}">
+                        {% if r.stato == 'in_attesa' %}In attesa
+                        {% elif r.stato == 'approvata' %}Approvata
+                        {% else %}Rifiutata{% endif %}
+                    </span>
+                    {% if r.motivo %}<span class="richiesta-motivo">{{ r.motivo }}</span>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">Non hai ancora inviato nessuna richiesta.</div>
+            {% endif %}
+        </div>
+
+        <div class="calendario-box" style="margin-top:20px;">
+            <div class="calendario-header">
+                <button type="button" class="calendario-nav" id="calMesePrec" aria-label="Mese precedente">‹</button>
+                <h3 id="calTitolo">—</h3>
+                <button type="button" class="calendario-nav" id="calMeseSucc" aria-label="Mese successivo">›</button>
+            </div>
+            <div class="calendario-griglia" id="calGriglia"></div>
+            <div class="calendario-legenda">
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--paper); border:1px solid var(--border);"></span> Weekend</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--alert);"></span> Ferie approvate</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--ink);"></span> Permesso approvato</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: rgba(201,138,59,0.3); border:1.5px dashed var(--brass);"></span> In attesa di approvazione</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tabs = document.querySelectorAll('.richiesta-tab');
+        const tipoInput = document.getElementById('tipoInput');
+        const dataInizio = document.getElementById('dataInizio');
+        const dataFine = document.getElementById('dataFine');
+        const toast = document.getElementById('toast');
+        const orarioPermessoRow = document.getElementById('orarioPermessoRow');
+        const orarioLavoroInfo = document.getElementById('orarioLavoroInfo');
+        const oraInizio = document.getElementById('oraInizio');
+        const oraFine = document.getElementById('oraFine');
+
+        const ORARIO_LAVORO_INIZIO = document.getElementById('richiestaForm').dataset.orarioInizio || null;
+        const ORARIO_LAVORO_FINE = document.getElementById('richiestaForm').dataset.orarioFine || null;
+
+        function aggiornaCampiOrario() {
+            const ePermesso = tipoInput.value === 'permesso';
+            orarioPermessoRow.style.display = ePermesso ? '' : 'none';
+            if (orarioLavoroInfo) orarioLavoroInfo.style.display = ePermesso ? '' : 'none';
+            oraInizio.required = ePermesso;
+            oraFine.required = ePermesso;
+            if (ePermesso) {
+                if (ORARIO_LAVORO_INIZIO) { oraInizio.min = ORARIO_LAVORO_INIZIO; oraFine.min = ORARIO_LAVORO_INIZIO; }
+                if (ORARIO_LAVORO_FINE) { oraInizio.max = ORARIO_LAVORO_FINE; oraFine.max = ORARIO_LAVORO_FINE; }
+                // Il permesso vale per un solo giorno
+                dataFine.value = dataInizio.value;
+                dataFine.disabled = true;
+            } else {
+                oraInizio.value = '';
+                oraFine.value = '';
+                dataFine.disabled = false;
+            }
+        }
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('attiva'));
+                tab.classList.add('attiva');
+                tipoInput.value = tab.dataset.tipo;
+                aggiornaCampiOrario();
+            });
+        });
+
+        aggiornaCampiOrario();
+
+        dataInizio.addEventListener('change', () => {
+            if (tipoInput.value === 'permesso') {
+                dataFine.value = dataInizio.value;
+            } else if (!dataFine.value || dataFine.value < dataInizio.value) {
+                dataFine.value = dataInizio.value;
+            }
+            dataFine.min = dataInizio.value;
+        });
+
+        function mostraToast(messaggio, tipo) {
+            toast.textContent = messaggio;
+            toast.className = 'toast toast-' + tipo + ' toast-visible';
+        }
+
+        function formattaDataIt(iso) {
+            if (!iso) return '';
+            const [y, m, d] = iso.split('-');
+            return `${d}/${m}/${y}`;
+        }
+
+        document.getElementById('richiestaForm').addEventListener('submit', (e) => {
+            if (!dataInizio.value) {
+                e.preventDefault();
+                mostraToast('Seleziona almeno la data di inizio', 'errore');
+                return;
+            }
+            if (tipoInput.value === 'permesso') {
+                if (!oraInizio.value || !oraFine.value) {
+                    e.preventDefault();
+                    mostraToast("Indica l'ora di inizio e di fine del permesso", 'errore');
+                    return;
+                }
+                if (oraFine.value <= oraInizio.value) {
+                    e.preventDefault();
+                    mostraToast("L'ora di fine deve essere successiva all'ora di inizio", 'errore');
+                    return;
+                }
+                if (ORARIO_LAVORO_INIZIO && oraInizio.value < ORARIO_LAVORO_INIZIO) {
+                    e.preventDefault();
+                    mostraToast(`Il permesso non può iniziare prima delle ${ORARIO_LAVORO_INIZIO}`, 'errore');
+                    return;
+                }
+                if (ORARIO_LAVORO_FINE && oraFine.value > ORARIO_LAVORO_FINE) {
+                    e.preventDefault();
+                    mostraToast(`Il permesso non può finire dopo le ${ORARIO_LAVORO_FINE}`, 'errore');
+                    return;
+                }
+                dataFine.disabled = false;
+                dataFine.value = dataInizio.value;
+            }
+
+            let messaggioConferma;
+            if (tipoInput.value === 'permesso') {
+                messaggioConferma = `Confermi la richiesta di permesso per il ${formattaDataIt(dataInizio.value)} dalle ${oraInizio.value} alle ${oraFine.value}?`;
+            } else {
+                const inizioIt = formattaDataIt(dataInizio.value);
+                const fineIt = formattaDataIt(dataFine.value || dataInizio.value);
+                messaggioConferma = (inizioIt === fineIt)
+                    ? `Confermi la richiesta di ferie per il ${inizioIt}?`
+                    : `Confermi la richiesta di ferie dal ${inizioIt} al ${fineIt}?`;
+            }
+            if (!confirm(messaggioConferma)) {
+                e.preventDefault();
+                if (tipoInput.value === 'permesso') {
+                    dataFine.disabled = true;
+                }
+            }
+        });
+
+        
+        const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+        const GIORNI_LABEL = ['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
+
+        const calTitolo = document.getElementById('calTitolo');
+        const calGriglia = document.getElementById('calGriglia');
+        const calMesePrec = document.getElementById('calMesePrec');
+        const calMeseSucc = document.getElementById('calMeseSucc');
+
+        const oggi = new Date();
+        let meseCorrente = oggi.getMonth();
+        let annoCorrente = oggi.getFullYear();
+        let eventi = [];
+
+        function toIsoDate(y, m, d) {
+            return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        }
+
+        function trovaEvento(dataIso) {
+            for (const ev of eventi) {
+                if (dataIso >= ev.data_inizio && dataIso <= ev.data_fine) return ev;
+            }
+            return null;
+        }
+
+        function renderCalendario() {
+            calTitolo.textContent = `${MESI[meseCorrente]} ${annoCorrente}`;
+            calGriglia.innerHTML = '';
+
+            GIORNI_LABEL.forEach(g => {
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno-label';
+                el.textContent = g;
+                calGriglia.appendChild(el);
+            });
+
+            const primoGiorno = new Date(annoCorrente, meseCorrente, 1);
+            let offset = primoGiorno.getDay() - 1;
+            if (offset < 0) offset = 6;
+
+            const giorniNelMese = new Date(annoCorrente, meseCorrente + 1, 0).getDate();
+            const giorniMesePrec = new Date(annoCorrente, meseCorrente, 0).getDate();
+
+            for (let i = 0; i < offset; i++) {
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno fuori-mese';
+                el.textContent = giorniMesePrec - offset + i + 1;
+                calGriglia.appendChild(el);
+            }
+
+            for (let d = 1; d <= giorniNelMese; d++) {
+                const dataIso = toIsoDate(annoCorrente, meseCorrente, d);
+                const dataObj = new Date(annoCorrente, meseCorrente, d);
+                const giornoSettimana = dataObj.getDay();
+                const el = document.createElement('div');
+                el.className = 'calendario-giorno';
+                el.textContent = d;
+
+                const isOggi = dataIso === toIsoDate(oggi.getFullYear(), oggi.getMonth(), oggi.getDate());
+                if (isOggi) el.classList.add('oggi');
+
+                const evento = trovaEvento(dataIso);
+                if (evento) {
+                    if (evento.stato === 'in_attesa') {
+                        el.classList.add('in-attesa');
+                    } else if (evento.tipo === 'ferie') {
+                        el.classList.add('ferie-approvata');
+                    } else {
+                        el.classList.add('permesso-approvato');
+                    }
+                } else if (giornoSettimana === 0 || giornoSettimana === 6) {
+                    el.classList.add('riposo');
+                }
+
+                calGriglia.appendChild(el);
+            }
+        }
+
+        function caricaEventi() {
+            fetch('/richieste/eventi')
+                .then(r => r.json())
+                .then(dati => {
+                    if (dati.ok) eventi = dati.eventi;
+                    renderCalendario();
+                })
+                .catch(() => renderCalendario());
+        }
+
+        calMesePrec.addEventListener('click', () => {
+            meseCorrente--;
+            if (meseCorrente < 0) { meseCorrente = 11; annoCorrente--; }
+            renderCalendario();
+        });
+        calMeseSucc.addEventListener('click', () => {
+            meseCorrente++;
+            if (meseCorrente > 11) { meseCorrente = 0; annoCorrente++; }
+            renderCalendario();
+        });
+
+        caricaEventi();
+    </script>
+</body>
+</html>

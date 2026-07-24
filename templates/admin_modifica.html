@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Modifica utente</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/dialoghi.js') }}"></script>
 </head>
 <body>
     <div class="top-bar">
@@ -109,7 +110,8 @@
                         <td>{{ o.note or '—' }}</td>
                         <td class="actions-cell">
                             <form action="/admin/orario_giornaliero/{{ user.id }}/elimina/{{ o.data }}" method="POST"
-                                  onsubmit="return confirm('Rimuovere la modifica per il {{ o.data }}? Tornerà l\'orario standard.');">
+                                  data-conferma="Rimuovere la modifica per il {{ o.data }}? Tornerà l'orario standard."
+                                  data-conferma-tipo="pericolo" data-conferma-titolo="Rimuovere la modifica" data-conferma-ok="Rimuovi">
                                 <button type="submit" class="btn btn-danger">Rimuovi</button>
                             </form>
                         </td>
@@ -120,6 +122,23 @@
             {% else %}
             <div class="empty-state">Nessuna modifica giornaliera programmata per questo dipendente.</div>
             {% endif %}
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h1 style="font-size:1.2rem;">Esporta Excel</h1>
+            <p>Scarica il dettaglio giornaliero e le statistiche di {{ user.name }} {{ user.cognome }} per un periodo a scelta.</p>
+
+            <form action="/admin/export/utente/{{ user.id }}" method="GET">
+                <div class="field-row">
+                    <label class="field">Da
+                        <input type="date" name="da" value="{{ export_da }}" required>
+                    </label>
+                    <label class="field">A
+                        <input type="date" name="a" value="{{ export_a }}" required>
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-brass">⬇️ Esporta Excel</button>
+            </form>
         </div>
 
         <div class="links">

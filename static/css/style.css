@@ -287,6 +287,89 @@ tbody tr:hover { background: #F7FAFC; }
   color: var(--text);
 }
 
+.dashboard-widget {
+  display: flex;
+  gap: 14px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.dashboard-stat {
+  flex: 1;
+  min-width: 150px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.dashboard-stat:hover {
+  border-color: var(--brass);
+  transform: translateY(-1px);
+}
+.dashboard-stat-numero {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+.dashboard-stat-etichetta {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.dashboard-stat-attivi .dashboard-stat-numero { color: var(--ok); }
+.dashboard-stat-ferie .dashboard-stat-numero { color: #C0403A; }
+.dashboard-stat-permesso .dashboard-stat-numero { color: #2E6BA8; }
+
+.dashboard-modal { max-width: 480px; }
+
+.export-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  box-shadow: var(--shadow);
+}
+.export-bar-label {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+.export-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.export-form input[type="date"] {
+  padding: 8px 10px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.88rem;
+  color: var(--text);
+  background: #fff;
+}
+.export-form input[type="date"]:focus {
+  outline: none;
+  border-color: var(--brass);
+}
+.export-separatore { color: var(--text-dim); }
+
 .notifiche-toggle {
   display: inline-flex;
   align-items: center;
@@ -1020,6 +1103,8 @@ tbody tr:hover { background: #F7FAFC; }
 .badge-stato-approvata { color: var(--ok); background: rgba(76,122,94,0.1); }
 .badge-stato-rifiutata { color: var(--alert); background: rgba(192,85,63,0.1); }
 
+.richiesta-azione-form { margin: 0; }
+
 /* --- consenso privacy (popup obbligatorio) --- */
 .privacy-overlay {
   display: none;
@@ -1183,11 +1268,18 @@ tbody tr:hover { background: #F7FAFC; }
 }
 .calendario-nav:hover { border-color: var(--brass); color: var(--brass-dark); }
 
-.calendario-griglia {
+.calendario-giorni-label {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: minmax(96px, auto);
-  gap: 6px;
+  gap: 0;
+  margin-bottom: 4px;
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(100%/7 - 1px),
+    var(--border) calc(100%/7 - 1px),
+    var(--border) calc(100%/7)
+  );
 }
 .calendario-giorno-label {
   text-align: center;
@@ -1198,107 +1290,123 @@ tbody tr:hover { background: #F7FAFC; }
   letter-spacing: 0.04em;
   padding-bottom: 4px;
 }
-.calendario-giorno {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  color: var(--text);
-  position: relative;
-  padding: 5px 6px;
-  border: 1px solid transparent;
-  overflow: hidden;
-}
-.calendario-giorno.fuori-mese { color: var(--border); }
-.calendario-giorno.oggi { border-color: var(--ink); }
-.calendario-giorno.riposo { background: var(--paper); color: var(--text-dim); }
-.calendario-giorno.in-attesa {
-  background: rgba(243,149,63,0.12);
-  border: 1.5px dashed var(--brass);
-}
-/* usate dal calendario personale del dipendente (richieste.html), che mostra un solo evento per giorno */
-.calendario-giorno.ferie-approvata { background: rgba(192,85,63,0.15); color: var(--alert); font-weight: 700; }
-.calendario-giorno.permesso-approvato { background: rgba(0,64,125,0.12); color: var(--ink); font-weight: 700; }
 
-.calendario-giorno-testata {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  margin-bottom: 4px;
-  flex-shrink: 0;
-}
-.calendario-giorno-numero {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text);
-}
-.calendario-giorno.fuori-mese .calendario-giorno-numero { color: var(--border); }
-.calendario-giorno.oggi .calendario-giorno-numero {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 19px;
-  height: 19px;
-  padding: 0 4px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--on-ink);
-  font-weight: 700;
-}
-
-.calendario-giorno-pallini {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.calendario-pallino {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 0.64rem;
-  font-weight: 700;
-  line-height: 1;
-}
-.calendario-pallino::before {
-  content: '';
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
-}
-.calendario-pallino-ferie { color: var(--alert); }
-.calendario-pallino-ferie::before { background: var(--alert); }
-.calendario-pallino-permesso { color: var(--ink); }
-.calendario-pallino-permesso::before { background: var(--ink); }
-
-.calendario-giorno-tag-lista {
+.calendario-griglia {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow: hidden;
 }
-.calendario-tag {
-  display: block;
-  font-size: 0.62rem;
+.calendario-settimana {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: min-content;
+  gap: 3px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(100%/7 - 1px),
+    var(--border) calc(100%/7 - 1px),
+    var(--border) calc(100%/7)
+  );
+}
+.calendario-settimana:last-child { border-bottom: none; }
+
+.calendario-num-giorno {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: 0.78rem;
+  text-align: right;
+  color: var(--text);
+  padding: 3px 6px 2px 0;
+  border-radius: 4px 4px 0 0;
+}
+.calendario-num-giorno.fuori-mese { color: var(--border); }
+.calendario-num-giorno.oggi { font-weight: 700; color: var(--ink); }
+.calendario-num-giorno.riposo { background: var(--paper); color: var(--text-dim); }
+.calendario-num-giorno.cliccabile { cursor: pointer; }
+.calendario-num-giorno.cliccabile:hover { background: rgba(0,64,125,0.07); }
+
+.calendario-giorno-pallini {
+  display: flex;
+  gap: 3px;
+}
+.calendario-pallino-conteggio {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+.calendario-pallino-conteggio.ferie { background: #C0403A; }
+.calendario-pallino-conteggio.permesso { background: #2E6BA8; }
+
+.calendario-evento {
+  grid-column: var(--col-start) / var(--col-end);
+  grid-row: var(--riga);
+  background: #C0403A;
+  color: #fff;
+  border: none;
+  font-family: inherit;
+  font-size: 0.7rem;
   font-weight: 600;
-  padding: 1px 5px;
+  text-align: left;
+  padding: 3px 7px;
   border-radius: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
   line-height: 1.4;
 }
-.calendario-tag-ferie { background: rgba(192,85,63,0.15); color: var(--alert); }
-.calendario-tag-permesso { background: rgba(0,64,125,0.12); color: var(--ink); }
-.calendario-tag-more {
-  font-size: 0.6rem;
-  font-weight: 600;
-  color: var(--text-dim);
-  padding: 1px 5px;
+.calendario-evento:hover { filter: brightness(1.08); box-shadow: 0 1px 5px rgba(0,0,0,0.25); }
+.calendario-evento:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.calendario-evento.tipo-permesso { background: #2E6BA8; }
+.calendario-evento.stato-in-attesa {
+  background: rgba(243,149,63,0.14);
+  color: var(--brass-dark);
+  border: 1.5px dashed var(--brass);
+  padding: 1.5px 6px;
 }
+
+.calendario-dettaglio {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  position: relative;
+}
+.calendario-dettaglio h4 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--ink);
+  padding-right: 24px;
+}
+.calendario-dettaglio p { margin: 3px 0; color: var(--text); }
+.calendario-dettaglio .calendario-dettaglio-chiudi {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.calendario-dettaglio .calendario-dettaglio-chiudi:hover { color: var(--ink); }
 
 .calendario-legenda {
   display: flex;
@@ -1319,41 +1427,6 @@ tbody tr:hover { background: #F7FAFC; }
   border-radius: 3px;
   display: inline-block;
 }
-
-/* --- calendario admin: giorno con più dipendenti --- */
-.calendario-giorno.cliccabile { cursor: pointer; }
-.calendario-giorno.cliccabile:hover { outline: 1.5px solid var(--brass); outline-offset: -1px; }
-.calendario-giorno.selezionato { outline: 2px solid var(--ink); outline-offset: -2px; }
-
-.calendario-dettaglio-giorno {
-  margin-top: 16px;
-  border-top: 1px solid var(--border);
-  padding-top: 14px;
-}
-.calendario-dettaglio-giorno h4 {
-  margin: 0 0 10px;
-  font-size: 0.88rem;
-  color: var(--text-dim);
-  font-weight: 700;
-}
-.calendario-dettaglio-lista {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.calendario-dettaglio-voce {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--paper);
-}
-.calendario-dettaglio-voce .badge-stato { font-size: 0.68rem; }
 
 /* ============================================================
    RESPONSIVE — tablet e mobile
@@ -1395,6 +1468,13 @@ tbody tr:hover { background: #F7FAFC; }
     justify-content: stretch;
   }
   .actions-row .btn { flex: 1; text-align: center; }
+
+  .dashboard-widget { flex-direction: column; }
+  .dashboard-stat { min-width: 0; }
+
+  .export-bar { flex-direction: column; align-items: stretch; }
+  .export-form { flex-direction: column; align-items: stretch; }
+  .export-form button { width: 100%; }
 
   .notifiche-panel { padding: 16px 16px; }
   .notifica {
@@ -1448,12 +1528,8 @@ tbody tr:hover { background: #F7FAFC; }
   .chat-bolla { max-width: 88%; }
 
   .calendario-box { padding: 16px 14px; }
-  .calendario-griglia { grid-auto-rows: minmax(74px, auto); gap: 4px; }
-  .calendario-giorno { font-size: 0.75rem; padding: 3px 4px; }
-  .calendario-giorno-numero { font-size: 0.72rem; }
-  .calendario-pallino { font-size: 0.58rem; gap: 2px; }
-  .calendario-pallino::before { width: 6px; height: 6px; }
-  .calendario-tag, .calendario-tag-more { font-size: 0.56rem; padding: 1px 4px; }
+  .calendario-num-giorno { font-size: 0.7rem; }
+  .calendario-evento { font-size: 0.62rem; padding: 2px 5px; }
   .richiesta-tabs { flex-direction: column; }
   .badge-stato { margin-left: 0; }
 }

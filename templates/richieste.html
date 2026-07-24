@@ -18,12 +18,6 @@
             <h1>Richiedi ferie o permesso</h1>
             <p>Invia una richiesta all'amministratore. Riceverai una risposta in chat non appena verrà gestita.</p>
 
-            {% with messaggi_sovrapposizione = get_flashed_messages(category_filter=['sovrapposizione']) %}
-            {% if messaggi_sovrapposizione %}
-            <p class="richieste-avviso">⚠️ {{ messaggi_sovrapposizione[0] }}</p>
-            {% endif %}
-            {% endwith %}
-
             <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
             <form id="richiestaForm" action="/richieste/nuova" method="POST" novalidate
@@ -80,15 +74,34 @@
                             dal {{ r.data_inizio }} al {{ r.data_fine }}
                         {% endif %}
                         {% if r.tipo == 'permesso' and r.ora_inizio and r.ora_fine %}
-                            (dalle {{ r.ora_inizio }} alle {{ r.ora_fine }})
+                            (inizio alle {{ r.ora_inizio }} e fine alle {{ r.ora_fine }})
                         {% endif %}
                     </span>
-                    <span class="badge-stato badge-stato-{{ r.stato }}">
+                    <span class="badge-stato badge-stato-{{ r.stato if r.stato in ('in_attesa', 'approvata', 'rifiutata') else 'rifiutata' }}">
                         {% if r.stato == 'in_attesa' %}In attesa
                         {% elif r.stato == 'approvata' %}Approvata
+                        {% elif r.stato == 'revocata' %}Rimossa
                         {% else %}Rifiutata{% endif %}
                     </span>
                     {% if r.motivo %}<span class="richiesta-motivo">{{ r.motivo }}</span>{% endif %}
+
+                    {% if r.stato == 'in_attesa' %}
+                    <form action="/richieste/{{ r.id }}/elimina" method="POST" class="richiesta-azione-form"
+                          data-conferma="Eliminare questa richiesta?" data-conferma-tipo="pericolo"
+                          data-conferma-titolo="Eliminare la richiesta" data-conferma-ok="Elimina">
+                        <button type="submit" class="btn btn-danger btn-small">Elimina</button>
+                    </form>
+                    {% elif r.stato == 'approvata' %}
+                        {% if r.rimozione_richiesta %}
+                        <span class="richiesta-motivo">Rimozione richiesta, in attesa di risposta dall'amministratore</span>
+                        {% else %}
+                        <form action="/richieste/{{ r.id }}/richiedi_rimozione" method="POST" class="richiesta-azione-form"
+                              data-conferma="Chiedere all'amministratore di rimuovere questa ferie/permesso già approvato?"
+                              data-conferma-titolo="Richiedi rimozione" data-conferma-ok="Chiedi rimozione">
+                            <button type="submit" class="btn btn-outline btn-small">Chiedi rimozione</button>
+                        </form>
+                        {% endif %}
+                    {% endif %}
                 </li>
                 {% endfor %}
             </ul>
@@ -103,16 +116,26 @@
                 <h3 id="calTitolo">—</h3>
                 <button type="button" class="calendario-nav" id="calMeseSucc" aria-label="Mese successivo">›</button>
             </div>
+            <div class="calendario-giorni-label">
+                <div class="calendario-giorno-label">Lun</div>
+                <div class="calendario-giorno-label">Mar</div>
+                <div class="calendario-giorno-label">Mer</div>
+                <div class="calendario-giorno-label">Gio</div>
+                <div class="calendario-giorno-label">Ven</div>
+                <div class="calendario-giorno-label">Sab</div>
+                <div class="calendario-giorno-label">Dom</div>
+            </div>
             <div class="calendario-griglia" id="calGriglia"></div>
             <div class="calendario-legenda">
-                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--paper); border:1px solid var(--border);"></span> Weekend</span>
-                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--alert);"></span> Ferie approvate</span>
-                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: var(--ink);"></span> Permesso approvato</span>
-                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: rgba(201,138,59,0.3); border:1.5px dashed var(--brass);"></span> In attesa di approvazione</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: #C0403A;"></span> Ferie approvate</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: #2E6BA8;"></span> Permesso approvato</span>
+                <span class="calendario-legenda-voce"><span class="calendario-legenda-pallino" style="background: rgba(243,149,63,0.2); border:1.5px dashed var(--brass);"></span> In attesa di approvazione</span>
             </div>
+            <div id="calDettaglio" class="calendario-dettaglio" style="display:none;"></div>
         </div>
     </div>
 
+    <script src="{{ url_for('static', filename='js/dialoghi.js') }}"></script>
     <script>
         const tabs = document.querySelectorAll('.richiesta-tab');
         const tipoInput = document.getElementById('tipoInput');
@@ -177,30 +200,40 @@
             return `${d}/${m}/${y}`;
         }
 
+        function trovaProprieRichiesteSovrapposte(inizio, fine) {
+            return eventi.filter(ev => !(fine < ev.data_inizio || inizio > ev.data_fine));
+        }
+
+        function etichettaEventoConferma(ev) {
+            const periodo = ev.data_inizio === ev.data_fine
+                ? `il ${formattaDataIt(ev.data_inizio)}`
+                : `dal ${formattaDataIt(ev.data_inizio)} al ${formattaDataIt(ev.data_fine)}`;
+            const orario = (ev.tipo === 'permesso' && ev.ora_inizio && ev.ora_fine) ? ` (${ev.ora_inizio}–${ev.ora_fine})` : '';
+            const stato = ev.stato === 'in_attesa' ? ', in attesa di approvazione' : ', già approvata';
+            return `${ev.tipo === 'ferie' ? 'Ferie' : 'Permesso'} ${periodo}${orario}${stato}`;
+        }
+
         document.getElementById('richiestaForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+
             if (!dataInizio.value) {
-                e.preventDefault();
                 mostraToast('Seleziona almeno la data di inizio', 'errore');
                 return;
             }
             if (tipoInput.value === 'permesso') {
                 if (!oraInizio.value || !oraFine.value) {
-                    e.preventDefault();
                     mostraToast("Indica l'ora di inizio e di fine del permesso", 'errore');
                     return;
                 }
                 if (oraFine.value <= oraInizio.value) {
-                    e.preventDefault();
                     mostraToast("L'ora di fine deve essere successiva all'ora di inizio", 'errore');
                     return;
                 }
                 if (ORARIO_LAVORO_INIZIO && oraInizio.value < ORARIO_LAVORO_INIZIO) {
-                    e.preventDefault();
                     mostraToast(`Il permesso non può iniziare prima delle ${ORARIO_LAVORO_INIZIO}`, 'errore');
                     return;
                 }
                 if (ORARIO_LAVORO_FINE && oraFine.value > ORARIO_LAVORO_FINE) {
-                    e.preventDefault();
                     mostraToast(`Il permesso non può finire dopo le ${ORARIO_LAVORO_FINE}`, 'errore');
                     return;
                 }
@@ -208,34 +241,99 @@
                 dataFine.value = dataInizio.value;
             }
 
+            const periodoInizio = dataInizio.value;
+            const periodoFine = dataFine.value || dataInizio.value;
+            const sovrapposteProprie = trovaProprieRichiesteSovrapposte(periodoInizio, periodoFine);
+
+            const conflittoTipoOpposto = sovrapposteProprie.find(ev => ev.tipo !== tipoInput.value);
+            if (conflittoTipoOpposto) {
+                mostraToast(
+                    `Non puoi richiedere ${tipoInput.value === 'ferie' ? 'ferie' : 'un permesso'}: hai già ${etichettaEventoConferma(conflittoTipoOpposto).toLowerCase()} — ferie e permesso non possono coesistere nello stesso giorno.`,
+                    'errore'
+                );
+                if (tipoInput.value === 'permesso') dataFine.disabled = true;
+                return;
+            }
+
+            fetch('/richieste/verifica_sovrapposizione', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'data_inizio=' + encodeURIComponent(periodoInizio) + '&data_fine=' + encodeURIComponent(periodoFine)
+            })
+                .then(r => r.json())
+                .then(dati => {
+                    const colleghiSovrapposti = (dati && dati.ok) ? (dati.colleghi || []) : [];
+                    chiediConfermaEInvia(periodoInizio, periodoFine, sovrapposteProprie, colleghiSovrapposti);
+                })
+                .catch(() => {
+                    // Se la verifica non va a buon fine, si procede comunque
+                    // con la sola parte di conferma calcolabile lato client.
+                    chiediConfermaEInvia(periodoInizio, periodoFine, sovrapposteProprie, []);
+                });
+        });
+
+        async function chiediConfermaEInvia(periodoInizio, periodoFine, sovrapposteProprie, colleghiSovrapposti) {
+            const avvisi = [];
+
+            if (sovrapposteProprie.length > 0) {
+                const elenco = sovrapposteProprie.map(etichettaEventoConferma).join('; ');
+                avvisi.push(`hai già ${sovrapposteProprie.length > 1 ? 'queste richieste' : 'questa richiesta'} per questo periodo: ${elenco}`);
+            }
+            if (colleghiSovrapposti.length > 0) {
+                const verbo = colleghiSovrapposti.length === 1 ? 'ha' : 'hanno';
+                avvisi.push(`anche ${colleghiSovrapposti.join(', ')} ${verbo} già ferie o permessi richiesti o approvati che si sovrappongono a questo periodo`);
+            }
+
+            if (avvisi.length > 0) {
+                const messaggioAvviso = `Attenzione: ${avvisi.join('; e inoltre ')}.`;
+                const procedi = await mostraConferma(messaggioAvviso, {
+                    titolo: 'Attenzione: periodo già occupato',
+                    tipo: 'pericolo',
+                    testoConferma: 'Procedi comunque',
+                    testoAnnulla: 'Annulla'
+                });
+                if (!procedi) {
+                    if (tipoInput.value === 'permesso') dataFine.disabled = true;
+                    return;
+                }
+            }
+
             let messaggioConferma;
             if (tipoInput.value === 'permesso') {
-                messaggioConferma = `Confermi la richiesta di permesso per il ${formattaDataIt(dataInizio.value)} dalle ${oraInizio.value} alle ${oraFine.value}?`;
+                messaggioConferma = `Confermi la richiesta di permesso per il ${formattaDataIt(periodoInizio)} dalle ${oraInizio.value} alle ${oraFine.value}?`;
             } else {
-                const inizioIt = formattaDataIt(dataInizio.value);
-                const fineIt = formattaDataIt(dataFine.value || dataInizio.value);
+                const inizioIt = formattaDataIt(periodoInizio);
+                const fineIt = formattaDataIt(periodoFine);
                 messaggioConferma = (inizioIt === fineIt)
                     ? `Confermi la richiesta di ferie per il ${inizioIt}?`
                     : `Confermi la richiesta di ferie dal ${inizioIt} al ${fineIt}?`;
             }
-            if (!confirm(messaggioConferma)) {
-                e.preventDefault();
-                if (tipoInput.value === 'permesso') {
-                    dataFine.disabled = true;
-                }
+
+            const confermato = await mostraConferma(messaggioConferma, {
+                titolo: 'Conferma invio richiesta',
+                tipo: 'domanda',
+                testoConferma: 'Invia richiesta',
+                testoAnnulla: 'Annulla'
+            });
+
+            if (confermato) {
+                document.getElementById('richiestaForm').submit();
+            } else if (tipoInput.value === 'permesso') {
+                dataFine.disabled = true;
             }
-        });
+        }
 
         
         const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
-        const GIORNI_LABEL = ['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
 
         const calTitolo = document.getElementById('calTitolo');
         const calGriglia = document.getElementById('calGriglia');
         const calMesePrec = document.getElementById('calMesePrec');
         const calMeseSucc = document.getElementById('calMeseSucc');
+        const calDettaglio = document.getElementById('calDettaglio');
 
         const oggi = new Date();
+        const oggiIso = toIsoDate(oggi.getFullYear(), oggi.getMonth(), oggi.getDate());
         let meseCorrente = oggi.getMonth();
         let annoCorrente = oggi.getFullYear();
         let eventi = [];
@@ -244,64 +342,143 @@
             return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         }
 
-        function trovaEvento(dataIso) {
-            for (const ev of eventi) {
-                if (dataIso >= ev.data_inizio && dataIso <= ev.data_fine) return ev;
+        function isoADate(iso) {
+            const [y, m, d] = iso.split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, d));
+        }
+
+        function giorniTraDate(isoA, isoB) {
+            return Math.round((isoADate(isoB) - isoADate(isoA)) / 86400000);
+        }
+
+        function formattaDataItCal(iso) {
+            const [y, m, d] = iso.split('-');
+            return `${d}/${m}/${y}`;
+        }
+
+        function costruisciSettimaneMese(anno, mese) {
+            const primoGiorno = new Date(anno, mese, 1);
+            let offset = primoGiorno.getDay() - 1;
+            if (offset < 0) offset = 6;
+
+            const giorniNelMese = new Date(anno, mese + 1, 0).getDate();
+            const giorniMesePrec = new Date(anno, mese, 0).getDate();
+
+            const celle = [];
+            for (let i = 0; i < offset; i++) {
+                const d = giorniMesePrec - offset + i + 1;
+                const dataObj = new Date(anno, mese - 1, d);
+                celle.push({ iso: toIsoDate(dataObj.getFullYear(), dataObj.getMonth(), d), giorno: d, inMese: false, weekend: dataObj.getDay() === 0 || dataObj.getDay() === 6 });
             }
-            return null;
+            for (let d = 1; d <= giorniNelMese; d++) {
+                const dataObj = new Date(anno, mese, d);
+                celle.push({ iso: toIsoDate(anno, mese, d), giorno: d, inMese: true, weekend: dataObj.getDay() === 0 || dataObj.getDay() === 6 });
+            }
+            let d2 = 1;
+            while (celle.length % 7 !== 0) {
+                const dataObj = new Date(anno, mese + 1, d2);
+                celle.push({ iso: toIsoDate(dataObj.getFullYear(), dataObj.getMonth(), d2), giorno: d2, inMese: false, weekend: dataObj.getDay() === 0 || dataObj.getDay() === 6 });
+                d2++;
+            }
+
+            const settimane = [];
+            for (let i = 0; i < celle.length; i += 7) settimane.push(celle.slice(i, i + 7));
+            return settimane;
+        }
+
+        // Assegna ad ogni evento una "corsia" verticale, in modo che eventi che
+        // si sovrappongono nel tempo non finiscano mai sulla stessa riga.
+        function assegnaCorsie(listaEventi) {
+            const ordinati = [...listaEventi].sort((a, b) => {
+                if (a.data_inizio !== b.data_inizio) return a.data_inizio < b.data_inizio ? -1 : 1;
+                return b.data_fine.localeCompare(a.data_fine);
+            });
+            const fineCorsia = [];
+            ordinati.forEach(ev => {
+                let corsia = fineCorsia.findIndex(fine => fine < ev.data_inizio);
+                if (corsia === -1) corsia = fineCorsia.length;
+                fineCorsia[corsia] = ev.data_fine;
+                ev._corsia = corsia;
+            });
+            return ordinati;
+        }
+
+        function etichettaEvento(ev) {
+            if (ev.tipo === 'ferie') return 'Ferie';
+            return 'Permesso' + (ev.ora_inizio ? ` ${ev.ora_inizio}–${ev.ora_fine}` : '');
         }
 
         function renderCalendario() {
             calTitolo.textContent = `${MESI[meseCorrente]} ${annoCorrente}`;
             calGriglia.innerHTML = '';
 
-            GIORNI_LABEL.forEach(g => {
-                const el = document.createElement('div');
-                el.className = 'calendario-giorno-label';
-                el.textContent = g;
-                calGriglia.appendChild(el);
+            const settimane = costruisciSettimaneMese(annoCorrente, meseCorrente);
+            const eventiConCorsia = assegnaCorsie(eventi);
+
+            settimane.forEach(settimana => {
+                const settimanaEl = document.createElement('div');
+                settimanaEl.className = 'calendario-settimana';
+
+                settimana.forEach((cella, colIdx) => {
+                    const numEl = document.createElement('div');
+                    numEl.className = 'calendario-num-giorno';
+                    if (!cella.inMese) numEl.classList.add('fuori-mese');
+                    if (cella.iso === oggiIso) numEl.classList.add('oggi');
+                    if (cella.weekend && cella.inMese) numEl.classList.add('riposo');
+                    numEl.style.gridColumn = String(colIdx + 1);
+                    numEl.textContent = cella.giorno;
+                    settimanaEl.appendChild(numEl);
+                });
+
+                const inizioSett = settimana[0].iso;
+                const fineSett = settimana[6].iso;
+
+                eventiConCorsia.forEach(ev => {
+                    if (ev.data_fine < inizioSett || ev.data_inizio > fineSett) return;
+                    const colInizio = Math.max(0, giorniTraDate(inizioSett, ev.data_inizio));
+                    const colFine = Math.min(6, giorniTraDate(inizioSett, ev.data_fine));
+
+                    const barra = document.createElement('button');
+                    barra.type = 'button';
+                    barra.className = 'calendario-evento tipo-' + ev.tipo + (ev.stato === 'in_attesa' ? ' stato-in-attesa' : '');
+                    barra.style.gridColumn = `${colInizio + 1} / ${colFine + 2}`;
+                    barra.style.gridRow = String(ev._corsia + 2);
+                    barra.textContent = etichettaEvento(ev) + (ev.stato === 'in_attesa' ? ' (in attesa)' : '');
+                    barra.addEventListener('click', () => mostraDettaglioEvento(ev));
+                    settimanaEl.appendChild(barra);
+                });
+
+                calGriglia.appendChild(settimanaEl);
             });
+        }
 
-            const primoGiorno = new Date(annoCorrente, meseCorrente, 1);
-            let offset = primoGiorno.getDay() - 1;
-            if (offset < 0) offset = 6;
+        function mostraDettaglioEvento(ev) {
+            const periodo = ev.data_inizio === ev.data_fine
+                ? `il ${formattaDataItCal(ev.data_inizio)}`
+                : `dal ${formattaDataItCal(ev.data_inizio)} al ${formattaDataItCal(ev.data_fine)}`;
+            const orario = (ev.tipo === 'permesso' && ev.ora_inizio && ev.ora_fine) ? `<p>Orario: ${ev.ora_inizio}–${ev.ora_fine}</p>` : '';
+            const stato = ev.stato === 'in_attesa' ? 'In attesa di approvazione' : 'Approvata';
+            const motivo = ev.motivo ? `<p>Motivo: ${escapeHtml(ev.motivo)}</p>` : '';
 
-            const giorniNelMese = new Date(annoCorrente, meseCorrente + 1, 0).getDate();
-            const giorniMesePrec = new Date(annoCorrente, meseCorrente, 0).getDate();
+            calDettaglio.innerHTML = `
+                <button type="button" class="calendario-dettaglio-chiudi" aria-label="Chiudi dettaglio" onclick="chiudiDettaglioEvento()">×</button>
+                <h4>${ev.tipo === 'ferie' ? 'Ferie' : 'Permesso'} ${periodo}</h4>
+                <p>Stato: ${stato}</p>
+                ${orario}
+                ${motivo}
+            `;
+            calDettaglio.style.display = 'block';
+            calDettaglio.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
 
-            for (let i = 0; i < offset; i++) {
-                const el = document.createElement('div');
-                el.className = 'calendario-giorno fuori-mese';
-                el.textContent = giorniMesePrec - offset + i + 1;
-                calGriglia.appendChild(el);
-            }
+        function chiudiDettaglioEvento() {
+            calDettaglio.style.display = 'none';
+        }
 
-            for (let d = 1; d <= giorniNelMese; d++) {
-                const dataIso = toIsoDate(annoCorrente, meseCorrente, d);
-                const dataObj = new Date(annoCorrente, meseCorrente, d);
-                const giornoSettimana = dataObj.getDay();
-                const el = document.createElement('div');
-                el.className = 'calendario-giorno';
-                el.textContent = d;
-
-                const isOggi = dataIso === toIsoDate(oggi.getFullYear(), oggi.getMonth(), oggi.getDate());
-                if (isOggi) el.classList.add('oggi');
-
-                const evento = trovaEvento(dataIso);
-                if (evento) {
-                    if (evento.stato === 'in_attesa') {
-                        el.classList.add('in-attesa');
-                    } else if (evento.tipo === 'ferie') {
-                        el.classList.add('ferie-approvata');
-                    } else {
-                        el.classList.add('permesso-approvato');
-                    }
-                } else if (giornoSettimana === 0 || giornoSettimana === 6) {
-                    el.classList.add('riposo');
-                }
-
-                calGriglia.appendChild(el);
-            }
+        function escapeHtml(testo) {
+            const div = document.createElement('div');
+            div.textContent = testo;
+            return div.innerHTML;
         }
 
         function caricaEventi() {
@@ -317,11 +494,13 @@
         calMesePrec.addEventListener('click', () => {
             meseCorrente--;
             if (meseCorrente < 0) { meseCorrente = 11; annoCorrente--; }
+            chiudiDettaglioEvento();
             renderCalendario();
         });
         calMeseSucc.addEventListener('click', () => {
             meseCorrente++;
             if (meseCorrente > 11) { meseCorrente = 0; annoCorrente++; }
+            chiudiDettaglioEvento();
             renderCalendario();
         });
 

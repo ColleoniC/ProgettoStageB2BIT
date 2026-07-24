@@ -1,3 +1,4 @@
+import io
 import os
 import secrets
 import sqlite3
@@ -5,7 +6,10 @@ import smtplib
 from email.message import EmailMessage
 from datetime import date, datetime, timedelta
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from dotenv import load_dotenv
@@ -165,7 +169,11 @@ def init_db():
 
     cursor.execute('PRAGMA table_info(richieste)')
     colonne_richieste_tab = {riga[1] for riga in cursor.fetchall()}
-    for nome_colonna, tipo_colonna in {'ora_inizio': 'TEXT', 'ora_fine': 'TEXT'}.items():
+    for nome_colonna, tipo_colonna in {
+        'ora_inizio': 'TEXT',
+        'ora_fine': 'TEXT',
+        'rimozione_richiesta': 'INTEGER NOT NULL DEFAULT 0',
+    }.items():
         if nome_colonna not in colonne_richieste_tab:
             cursor.execute(f'ALTER TABLE richieste ADD COLUMN {nome_colonna} {tipo_colonna}')
 
@@ -216,6 +224,28 @@ def trova_colleghi_sovrapposti(cursor, user_id, data_inizio, data_fine):
     for r in righe:
         colleghi.setdefault(r['user_id'], f"{r['name']} {r['cognome']}")
     return list(colleghi.values())
+
+
+def trova_conflitto_ferie_permesso(cursor, user_id, tipo, data_inizio, data_fine,
+                                    escludi_richiesta_id=None, stati=('approvata', 'in_attesa')):
+    """True se lo stesso dipendente ha già un'altra richiesta del tipo
+    OPPOSTO (ferie se questa è un permesso, permesso se questa è una ferie)
+    che si sovrappone, anche solo per un giorno, al periodo indicato: ferie
+    e permesso sono mutuamente esclusivi nello stesso giorno per la stessa
+    persona."""
+    tipo_opposto = 'permesso' if tipo == 'ferie' else 'ferie'
+    segnaposto_stati = ','.join('?' for _ in stati)
+    query = f'''SELECT 1 FROM richieste
+                WHERE user_id = ? AND tipo = ? AND stato IN ({segnaposto_stati})
+                  AND data_inizio <= ? AND data_fine >= ?'''
+    parametri = [user_id, tipo_opposto, *stati, data_fine, data_inizio]
+
+    if escludi_richiesta_id is not None:
+        query += ' AND id != ?'
+        parametri.append(escludi_richiesta_id)
+
+    cursor.execute(query, parametri)
+    return cursor.fetchone() is not None
 
 
 def crea_messaggio(user_id, mittente, testo):
@@ -424,6 +454,205 @@ TRANSIZIONI_AMMESSE = {
 }
 
 
+def get_dashboard_oggi():
+    """Restituisce, per il widget dashboard del pannello admin, l'elenco dei
+    dipendenti attivi oggi (cioè non in ferie), di chi è in ferie e di chi è
+    in permesso, con lo stato di timbratura per gli attivi."""
+    oggi_iso = date.today().isoformat()
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT id, name, cognome FROM users ORDER BY cognome, name')
+    tutti_utenti = cursor.fetchall()
+
+    cursor.execute(
+        '''SELECT users.id, users.name, users.cognome
+           FROM richieste JOIN users ON users.id = richieste.user_id
+           WHERE richieste.tipo = 'ferie' AND richieste.stato = 'approvata'
+             AND richieste.data_inizio <= ? AND richieste.data_fine >= ?
+           ORDER BY users.cognome, users.name''',
+        (oggi_iso, oggi_iso)
+    )
+    in_ferie = cursor.fetchall()
+    id_in_ferie = {r['id'] for r in in_ferie}
+
+    cursor.execute(
+        '''SELECT users.id, users.name, users.cognome, richieste.ora_inizio, richieste.ora_fine
+           FROM richieste JOIN users ON users.id = richieste.user_id
+           WHERE richieste.tipo = 'permesso' AND richieste.stato = 'approvata'
+             AND richieste.data_inizio <= ? AND richieste.data_fine >= ?
+           ORDER BY users.cognome, users.name''',
+        (oggi_iso, oggi_iso)
+    )
+    in_permesso = cursor.fetchall()
+    id_in_permesso = {r['id'] for r in in_permesso}
+
+    cursor.execute(
+        "SELECT DISTINCT user_id FROM timbrature WHERE tipo = 'entrata' AND creato_il LIKE ?",
+        (f'{oggi_iso}%',)
+    )
+    id_firmati = {r['user_id'] for r in cursor.fetchall()}
+    conn.close()
+
+    return {
+        'attivi': [
+            {
+                'id': u['id'],
+                'nome': u['name'],
+                'cognome': u['cognome'],
+                'firmato': u['id'] in id_firmati,
+                'in_permesso': u['id'] in id_in_permesso,
+            }
+            for u in tutti_utenti if u['id'] not in id_in_ferie
+        ],
+        'ferie': [{'id': r['id'], 'nome': r['name'], 'cognome': r['cognome']} for r in in_ferie],
+        'permesso': [
+            {
+                'id': r['id'], 'nome': r['name'], 'cognome': r['cognome'],
+                'ora_inizio': r['ora_inizio'], 'ora_fine': r['ora_fine'],
+            }
+            for r in in_permesso
+        ],
+    }
+
+
+GIORNI_SETTIMANA_IT = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica']
+
+
+def leggi_periodo_da_richiesta():
+    """Legge i parametri 'da' e 'a' dalla query string per gli export Excel;
+    se assenti o non validi usa il mese corrente (dal giorno 1 a oggi)."""
+    oggi = date.today()
+    da_raw = request.args.get('da', '').strip()
+    a_raw = request.args.get('a', '').strip()
+
+    try:
+        da = date.fromisoformat(da_raw) if da_raw else oggi.replace(day=1)
+    except ValueError:
+        da = oggi.replace(day=1)
+
+    try:
+        a = date.fromisoformat(a_raw) if a_raw else oggi
+    except ValueError:
+        a = oggi
+
+    if a < da:
+        da, a = a, da
+
+    return da, a
+
+
+def giorni_intersezione(data_inizio_iso, data_fine_iso, da, a):
+    """Numero di giorni di [data_inizio, data_fine] che ricadono anche
+    dentro il periodo [da, a] (entrambi gli intervalli inclusivi)."""
+    inizio = max(date.fromisoformat(data_inizio_iso), da)
+    fine = min(date.fromisoformat(data_fine_iso), a)
+    if fine < inizio:
+        return 0
+    return (fine - inizio).days + 1
+
+
+def calcola_giornata_per_export(punches, giorno, oggi):
+    """Come calcola_stato_giornata, ma pensato per un export su un giorno
+    già trascorso: se la giornata risulta incompleta (l'ultima timbratura
+    non è un'uscita) non inventa ore lavorate fino ad ora, ma si ferma
+    all'ultima timbratura registrata quel giorno."""
+    if giorno == oggi:
+        riferimento = datetime.now()
+    elif punches:
+        riferimento = datetime.fromisoformat(punches[-1]['creato_il'])
+    else:
+        riferimento = datetime.combine(giorno, datetime.min.time())
+    return calcola_stato_giornata(punches, riferimento)
+
+
+def formatta_ore_minuti(secondi):
+    ore, resto = divmod(int(secondi), 3600)
+    minuti = resto // 60
+    return f"{ore}:{minuti:02d}"
+
+
+def formatta_data_it(d):
+    return d.strftime('%d/%m/%Y')
+
+
+COLORE_INTESTAZIONE_EXCEL = '00407D'
+
+
+def crea_risposta_excel(titolo, intestazioni, righe, nome_file, righe_extra=None):
+    """Costruisce un file .xlsx con una riga di titolo, un'intestazione in
+    grassetto e le righe di dati; le colonne vengono allargate in base al
+    contenuto più lungo così il testo si legge senza dover ridimensionare
+    manualmente le celle. Le date passate come oggetti date vengono scritte
+    come date vere (non testo), formattate in stile italiano GG/MM/AAAA.
+    righe_extra (opzionale) è un elenco di righe aggiuntive (es. un
+    riepilogo statistico) aggiunte sotto una riga vuota, senza una propria
+    intestazione."""
+    numero_colonne = len(intestazioni)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Dati'
+
+    ws.append([titolo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(numero_colonne, 1))
+    ws.cell(row=1, column=1).font = Font(bold=True, size=13)
+
+    ws.append([])
+
+    riga_intestazioni = 3
+    ws.append(intestazioni)
+    for colonna in range(1, numero_colonne + 1):
+        cella = ws.cell(row=riga_intestazioni, column=colonna)
+        cella.font = Font(bold=True, color='FFFFFF')
+        cella.fill = PatternFill('solid', fgColor=COLORE_INTESTAZIONE_EXCEL)
+        cella.alignment = Alignment(vertical='center')
+
+    prima_riga_dati = riga_intestazioni + 1
+    for riga in righe:
+        ws.append(riga)
+
+    ultima_riga_dati = prima_riga_dati + len(righe) - 1
+    for indice_riga in range(prima_riga_dati, ultima_riga_dati + 1):
+        for colonna in range(1, numero_colonne + 1):
+            cella = ws.cell(row=indice_riga, column=colonna)
+            if isinstance(cella.value, date):
+                cella.number_format = 'DD/MM/YYYY'
+
+    if righe_extra:
+        ws.append([])
+        riga_titolo_extra = ws.max_row + 1
+        for riga in righe_extra:
+            ws.append(riga)
+        ws.cell(row=riga_titolo_extra, column=1).font = Font(bold=True)
+
+    larghezze = [len(str(intestazione)) for intestazione in intestazioni]
+    for riga in righe:
+        for indice, valore in enumerate(riga):
+            testo = formatta_data_it(valore) if isinstance(valore, date) else str(valore)
+            larghezze[indice] = max(larghezze[indice], len(testo))
+    if righe_extra:
+        for riga in righe_extra:
+            for indice, valore in enumerate(riga):
+                if indice < len(larghezze):
+                    larghezze[indice] = max(larghezze[indice], len(str(valore)))
+
+    for indice, larghezza in enumerate(larghezze, start=1):
+        ws.column_dimensions[get_column_letter(indice)].width = min(max(larghezza + 4, 12), 45)
+
+    ws.freeze_panes = f'A{prima_riga_dati}'
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    return Response(
+        buffer.getvalue(),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="{nome_file}"'}
+    )
+
+
 def require_admin():
     """Restituisce None se l'utente è admin, altrimenti un redirect al login admin."""
     if session.get('tipo_utente') != 'admin':
@@ -488,6 +717,14 @@ def admin_panel():
 
     controlla_assenze()
 
+    dashboard_oggi = get_dashboard_oggi()
+    dashboard_conteggi = {
+        'attivi': len(dashboard_oggi['attivi']),
+        'firmati': sum(1 for u in dashboard_oggi['attivi'] if u['firmato']),
+        'ferie': len(dashboard_oggi['ferie']),
+        'permesso': len(dashboard_oggi['permesso']),
+    }
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -520,6 +757,14 @@ def admin_panel():
         ORDER BY richieste.gestita_il DESC LIMIT 15
     ''')
     richieste_gestite = cursor.fetchall()
+
+    cursor.execute('''
+        SELECT richieste.*, users.name, users.cognome
+        FROM richieste JOIN users ON users.id = richieste.user_id
+        WHERE richieste.stato = 'approvata' AND richieste.rimozione_richiesta = 1
+        ORDER BY richieste.creato_il ASC
+    ''')
+    richieste_rimozione = cursor.fetchall()
     conn.close()
 
     return render_template(
@@ -529,46 +774,221 @@ def admin_panel():
         notifiche=notifiche,
         notifiche_non_lette=notifiche_non_lette,
         richieste_in_attesa=richieste_in_attesa,
-        richieste_gestite=richieste_gestite
+        richieste_gestite=richieste_gestite,
+        richieste_rimozione=richieste_rimozione,
+        dashboard_oggi=dashboard_oggi,
+        dashboard_conteggi=dashboard_conteggi,
+        export_da=date.today().replace(day=1).isoformat(),
+        export_a=date.today().isoformat()
     )
 
 
-@app.route('/admin/calendario/eventi')
-def admin_calendario_eventi():
-    """Restituisce, in JSON, tutte le ferie e i permessi approvati di tutti
-    i dipendenti, da mostrare nel calendario del pannello admin."""
+ORE_MENSILI_MASSIME = 160
+
+
+def _statistiche_utente_periodo(cursor, utente, da, a):
+    """Calcola le statistiche di un dipendente nel periodo [da, a]: giorni
+    lavorati, ore lavorate, giorni di ferie, ore di permesso, conteggio di
+    ritardi/assenze segnalati, e ore di straordinario/ore mancanti rispetto
+    al tetto massimo di ORE_MENSILI_MASSIME ore lavorate nel periodo."""
+    user_id = utente['id']
+    da_iso, a_iso = da.isoformat(), a.isoformat()
+    oggi = date.today()
+
+    cursor.execute(
+        "SELECT tipo, creato_il FROM timbrature WHERE user_id = ? AND creato_il >= ? AND creato_il < ? ORDER BY creato_il ASC",
+        (user_id, da_iso, (a + timedelta(days=1)).isoformat())
+    )
+    per_giorno = {}
+    for r in cursor.fetchall():
+        per_giorno.setdefault(r['creato_il'][:10], []).append(dict(r))
+
+    giorni_lavorati = 0
+    secondi_totali = 0
+    for giorno_str, punches in per_giorno.items():
+        _, secondi = calcola_giornata_per_export(punches, date.fromisoformat(giorno_str), oggi)
+        if secondi > 0:
+            giorni_lavorati += 1
+        secondi_totali += secondi
+
+    cursor.execute(
+        '''SELECT data_inizio, data_fine FROM richieste
+           WHERE user_id = ? AND tipo = 'ferie' AND stato = 'approvata'
+             AND data_inizio <= ? AND data_fine >= ?''',
+        (user_id, a_iso, da_iso)
+    )
+    giorni_ferie = sum(giorni_intersezione(r['data_inizio'], r['data_fine'], da, a) for r in cursor.fetchall())
+
+    cursor.execute(
+        '''SELECT ora_inizio, ora_fine FROM richieste
+           WHERE user_id = ? AND tipo = 'permesso' AND stato = 'approvata'
+             AND data_inizio <= ? AND data_fine >= ?''',
+        (user_id, a_iso, da_iso)
+    )
+    secondi_permesso = 0
+    for r in cursor.fetchall():
+        if r['ora_inizio'] and r['ora_fine']:
+            try:
+                inizio_dt = datetime.strptime(r['ora_inizio'], '%H:%M')
+                fine_dt = datetime.strptime(r['ora_fine'], '%H:%M')
+                secondi_permesso += (fine_dt - inizio_dt).total_seconds()
+            except ValueError:
+                pass
+
+    cursor.execute(
+        '''SELECT tipo, COUNT(*) AS n FROM notifiche
+           WHERE user_id = ? AND tipo IN ('alert', 'assenza')
+             AND creato_il >= ? AND creato_il < ?
+           GROUP BY tipo''',
+        (user_id, da_iso, (a + timedelta(days=1)).isoformat())
+    )
+    conteggi = {r['tipo']: r['n'] for r in cursor.fetchall()}
+
+    secondi_target = ORE_MENSILI_MASSIME * 3600
+    secondi_straordinario = max(0, secondi_totali - secondi_target)
+    secondi_mancanti = max(0, secondi_target - secondi_totali)
+
+    return {
+        'giorni_lavorati': giorni_lavorati,
+        'secondi_lavorati': secondi_totali,
+        'giorni_ferie': giorni_ferie,
+        'secondi_permesso': secondi_permesso,
+        'ritardi': conteggi.get('alert', 0),
+        'assenze': conteggi.get('assenza', 0),
+        'secondi_straordinario': secondi_straordinario,
+        'secondi_mancanti': secondi_mancanti,
+    }
+
+
+@app.route('/admin/export/riepilogo')
+def export_riepilogo_excel():
+    """Esporta in Excel, per tutti i dipendenti, le statistiche del periodo
+    indicato (query string 'da'/'a', default: mese corrente)."""
     redirect_response = require_admin()
     if redirect_response:
-        return jsonify({'ok': False, 'errore': 'Non autenticato'}), 401
+        return redirect_response
+
+    da, a = leggi_periodo_da_richiesta()
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT richieste.tipo, richieste.data_inizio, richieste.data_fine,
-               richieste.ora_inizio, richieste.ora_fine,
-               users.id AS user_id, users.name, users.cognome
-        FROM richieste JOIN users ON users.id = richieste.user_id
-        WHERE richieste.stato = 'approvata'
-        ORDER BY richieste.data_inizio ASC
-    ''')
-    righe = cursor.fetchall()
+    cursor.execute('SELECT * FROM users ORDER BY cognome, name')
+    utenti = cursor.fetchall()
+
+    intestazioni = ['Nome', 'Cognome', 'Email', 'Giorni lavorati', 'Ore lavorate',
+                    'Giorni di ferie', 'Ore di permesso', 'Ritardi',
+                    f'Ore di straordinario (oltre {ORE_MENSILI_MASSIME}h)',
+                    f'Ore mancanti (su {ORE_MENSILI_MASSIME}h)', 'Assenze segnalate']
+
+    righe = []
+    for utente in utenti:
+        s = _statistiche_utente_periodo(cursor, utente, da, a)
+        righe.append([
+            utente['name'], utente['cognome'], utente['email'],
+            s['giorni_lavorati'],
+            formatta_ore_minuti(s['secondi_lavorati']),
+            s['giorni_ferie'],
+            formatta_ore_minuti(s['secondi_permesso']),
+            s['ritardi'],
+            formatta_ore_minuti(s['secondi_straordinario']),
+            formatta_ore_minuti(s['secondi_mancanti']),
+            s['assenze'],
+        ])
+
     conn.close()
 
-    return jsonify({
-        'ok': True,
-        'eventi': [
-            {
-                'tipo': r['tipo'],
-                'data_inizio': r['data_inizio'],
-                'data_fine': r['data_fine'],
-                'ora_inizio': r['ora_inizio'],
-                'ora_fine': r['ora_fine'],
-                'user_id': r['user_id'],
-                'nome': f"{r['name']} {r['cognome']}",
-            }
-            for r in righe
-        ]
-    })
+    titolo = f"Riepilogo dipendenti dal {formatta_data_it(da)} al {formatta_data_it(a)}"
+    nome_file = f"riepilogo_{da.isoformat()}_{a.isoformat()}.xlsx"
+    return crea_risposta_excel(titolo, intestazioni, righe, nome_file)
+
+
+@app.route('/admin/export/utente/<int:user_id>')
+def export_utente_excel(user_id):
+    """Esporta in Excel il dettaglio giornaliero (senza sabati e domeniche)
+    di un dipendente nel periodo indicato (query string 'da'/'a', default:
+    mese corrente), con un riepilogo statistico in coda."""
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    utente = cursor.fetchone()
+    if utente is None:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Utente non trovato'}), 404
+
+    da, a = leggi_periodo_da_richiesta()
+    da_iso, a_iso = da.isoformat(), a.isoformat()
+    oggi = date.today()
+
+    cursor.execute(
+        "SELECT tipo, creato_il FROM timbrature WHERE user_id = ? AND creato_il >= ? AND creato_il < ? ORDER BY creato_il ASC",
+        (user_id, da_iso, (a + timedelta(days=1)).isoformat())
+    )
+    per_giorno = {}
+    for r in cursor.fetchall():
+        per_giorno.setdefault(r['creato_il'][:10], []).append(dict(r))
+
+    cursor.execute(
+        'SELECT * FROM orari_giornalieri WHERE user_id = ? AND data >= ? AND data <= ?',
+        (user_id, da_iso, a_iso)
+    )
+    override_per_giorno = {r['data']: r for r in cursor.fetchall()}
+
+    statistiche = _statistiche_utente_periodo(cursor, utente, da, a)
+    conn.close()
+
+    intestazioni = ['Data', 'Giorno', 'Entrata', 'Inizio pausa', 'Fine pausa', 'Uscita',
+                    'Ore lavorate', 'Ferie', 'Permesso', 'Nota']
+
+    righe = []
+    giorno = da
+    while giorno <= a:
+        if giorno.weekday() >= 5:  # sabato (5) e domenica (6): non giornate lavorative
+            giorno += timedelta(days=1)
+            continue
+
+        giorno_iso = giorno.isoformat()
+        punches = per_giorno.get(giorno_iso, [])
+        etichette_punch = {p['tipo']: datetime.fromisoformat(p['creato_il']).strftime('%H:%M') for p in punches}
+        _, secondi = calcola_giornata_per_export(punches, giorno, oggi)
+
+        override = override_per_giorno.get(giorno_iso)
+        permesso_str = ''
+        if override and override['permesso_inizio'] and override['permesso_fine']:
+            permesso_str = f"{override['permesso_inizio']}–{override['permesso_fine']}"
+
+        righe.append([
+            giorno,
+            GIORNI_SETTIMANA_IT[giorno.weekday()],
+            etichette_punch.get('entrata', ''),
+            etichette_punch.get('pausa_inizio', ''),
+            etichette_punch.get('pausa_fine', ''),
+            etichette_punch.get('uscita', ''),
+            formatta_ore_minuti(secondi) if secondi > 0 else '',
+            'Sì' if ha_ferie_approvata(user_id, giorno_iso) else '',
+            permesso_str,
+            (override['note'] if override else '') or '',
+        ])
+        giorno += timedelta(days=1)
+
+    righe_extra = [
+        ['Riepilogo periodo'],
+        ['Giorni lavorati', statistiche['giorni_lavorati']],
+        ['Ore lavorate totali', formatta_ore_minuti(statistiche['secondi_lavorati'])],
+        ['Giorni di ferie', statistiche['giorni_ferie']],
+        ['Ore di permesso', formatta_ore_minuti(statistiche['secondi_permesso'])],
+        ['Ritardi', statistiche['ritardi']],
+        [f'Ore di straordinario (oltre {ORE_MENSILI_MASSIME}h)', formatta_ore_minuti(statistiche['secondi_straordinario'])],
+        [f'Ore mancanti (su {ORE_MENSILI_MASSIME}h)', formatta_ore_minuti(statistiche['secondi_mancanti'])],
+        ['Assenze segnalate', statistiche['assenze']],
+    ]
+
+    titolo = f"Riepilogo di {utente['name']} {utente['cognome']} ({utente['email']}) dal {formatta_data_it(da)} al {formatta_data_it(a)}"
+    nome_file = f"{utente['cognome']}_{utente['name']}_{da_iso}_{a_iso}.xlsx".replace(' ', '_')
+    return crea_risposta_excel(titolo, intestazioni, righe, nome_file, righe_extra=righe_extra)
 
 
 @app.route('/admin/create_user', methods=['GET'])
@@ -693,7 +1113,9 @@ def edit_user_page(user_id):
         'admin_modifica.html',
         user=user,
         orari_giornalieri=orari_giornalieri,
-        oggi=date.today().isoformat()
+        oggi=date.today().isoformat(),
+        export_da=date.today().replace(day=1).isoformat(),
+        export_a=date.today().isoformat()
     )
 
 
@@ -850,6 +1272,18 @@ def _gestisci_richiesta(richiesta_id, nuovo_stato):
         conn.close()
         return jsonify({'ok': False, 'errore': 'Richiesta non trovata'}), 404
 
+    if nuovo_stato == 'approvata' and trova_conflitto_ferie_permesso(
+            cursor, richiesta['user_id'], richiesta['tipo'],
+            richiesta['data_inizio'], richiesta['data_fine'],
+            escludi_richiesta_id=richiesta_id, stati=('approvata',)):
+        conn.close()
+        tipo_opposto = 'permesso' if richiesta['tipo'] == 'ferie' else 'ferie'
+        return jsonify({
+            'ok': False,
+            'errore': f"Il dipendente ha già una richiesta di {tipo_opposto} approvata che si sovrappone a questo "
+                      f"periodo: ferie e permesso non possono coesistere nello stesso giorno"
+        }), 409
+
     cursor.execute(
         'UPDATE richieste SET stato = ?, gestita_il = ? WHERE id = ?',
         (nuovo_stato, datetime.now().isoformat(), richiesta_id)
@@ -900,6 +1334,96 @@ def _gestisci_richiesta(richiesta_id, nuovo_stato):
     return redirect(url_for('admin_panel'))
 
 
+@app.route('/admin/richieste/<int:richiesta_id>/approva_rimozione', methods=['POST'])
+def approva_rimozione_richiesta(richiesta_id):
+    """L'admin conferma la rimozione di una ferie/permesso già approvato,
+    su richiesta del dipendente. La richiesta passa allo stato 'revocata' e,
+    per i permessi, viene ripulito l'orario giornaliero che era stato creato
+    al momento dell'approvazione."""
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM richieste WHERE id = ?', (richiesta_id,))
+    richiesta = cursor.fetchone()
+
+    if richiesta is None:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Richiesta non trovata'}), 404
+
+    if richiesta['stato'] != 'approvata' or not richiesta['rimozione_richiesta']:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Nessuna rimozione da approvare per questa richiesta'}), 400
+
+    cursor.execute(
+        "UPDATE richieste SET stato = 'revocata', rimozione_richiesta = 0, gestita_il = ? WHERE id = ?",
+        (datetime.now().isoformat(), richiesta_id)
+    )
+
+    if richiesta['tipo'] == 'permesso' and richiesta['ora_inizio'] and richiesta['ora_fine']:
+        giorno = date.fromisoformat(richiesta['data_inizio'])
+        fine = date.fromisoformat(richiesta['data_fine'])
+        while giorno <= fine:
+            cursor.execute(
+                '''UPDATE orari_giornalieri SET permesso_inizio = NULL, permesso_fine = NULL
+                   WHERE user_id = ? AND data = ?''',
+                (richiesta['user_id'], giorno.isoformat())
+            )
+            giorno += timedelta(days=1)
+
+    conn.commit()
+    conn.close()
+
+    etichetta_tipo = 'ferie' if richiesta['tipo'] == 'ferie' else 'permesso'
+    periodo = richiesta['data_inizio'] if richiesta['data_inizio'] == richiesta['data_fine'] else f"dal {richiesta['data_inizio']} al {richiesta['data_fine']}"
+    crea_messaggio(
+        richiesta['user_id'], 'admin',
+        f"La rimozione di {etichetta_tipo} ({periodo}) è stata confermata."
+    )
+
+    return redirect(url_for('admin_panel'))
+
+
+@app.route('/admin/richieste/<int:richiesta_id>/rifiuta_rimozione', methods=['POST'])
+def rifiuta_rimozione_richiesta(richiesta_id):
+    """L'admin rifiuta la richiesta di rimozione: la ferie/permesso resta
+    approvato/a esattamente come prima."""
+    redirect_response = require_admin()
+    if redirect_response:
+        return redirect_response
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM richieste WHERE id = ?', (richiesta_id,))
+    richiesta = cursor.fetchone()
+
+    if richiesta is None:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Richiesta non trovata'}), 404
+
+    if richiesta['stato'] != 'approvata' or not richiesta['rimozione_richiesta']:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Nessuna rimozione da rifiutare per questa richiesta'}), 400
+
+    cursor.execute(
+        "UPDATE richieste SET rimozione_richiesta = 0 WHERE id = ?",
+        (richiesta_id,)
+    )
+    conn.commit()
+    conn.close()
+
+    etichetta_tipo = 'ferie' if richiesta['tipo'] == 'ferie' else 'permesso'
+    periodo = richiesta['data_inizio'] if richiesta['data_inizio'] == richiesta['data_fine'] else f"dal {richiesta['data_inizio']} al {richiesta['data_fine']}"
+    crea_messaggio(
+        richiesta['user_id'], 'admin',
+        f"La richiesta di rimozione per {etichetta_tipo} ({periodo}) è stata rifiutata: resta valido/a come approvato/a."
+    )
+
+    return redirect(url_for('admin_panel'))
+
+
 @app.route('/richieste', methods=['GET'])
 def richieste_page():
     if 'user' not in session:
@@ -920,6 +1444,29 @@ def richieste_page():
     conn.close()
 
     return render_template('richieste.html', richieste=mie_richieste, utente=utente)
+
+
+@app.route('/richieste/verifica_sovrapposizione', methods=['POST'])
+def verifica_sovrapposizione_richiesta():
+    """Controlla, senza creare nulla, se per il periodo indicato altri
+    colleghi hanno già ferie/permessi (approvati o in attesa) che si
+    sovrappongono. Usata dal front-end per mostrare un popup di conferma
+    PRIMA di inviare effettivamente la richiesta."""
+    if 'user' not in session or session.get('tipo_utente') == 'admin':
+        return jsonify({'ok': False, 'errore': 'Non autenticato'}), 401
+
+    data_inizio = request.form.get('data_inizio', '').strip()
+    data_fine = request.form.get('data_fine', '').strip() or data_inizio
+    if not data_inizio:
+        return jsonify({'ok': False, 'errore': 'La data di inizio è obbligatoria'}), 400
+
+    user_id = session['user'].get('id')
+    conn = get_db()
+    cursor = conn.cursor()
+    colleghi_sovrapposti = trova_colleghi_sovrapposti(cursor, user_id, data_inizio, data_fine)
+    conn.close()
+
+    return jsonify({'ok': True, 'colleghi': colleghi_sovrapposti})
 
 
 @app.route('/richieste/nuova', methods=['POST'])
@@ -986,6 +1533,16 @@ def crea_richiesta():
 
     conn = get_db()
     cursor = conn.cursor()
+
+    if trova_conflitto_ferie_permesso(cursor, user_id, tipo, data_inizio, data_fine):
+        conn.close()
+        tipo_opposto = 'permesso' if tipo == 'ferie' else 'ferie'
+        return jsonify({
+            'ok': False,
+            'errore': f"Hai già una richiesta di {tipo_opposto} (approvata o in attesa) che si sovrappone a questo "
+                      f"periodo: ferie e permesso non possono coesistere nello stesso giorno"
+        }), 409
+
     cursor.execute(
         '''INSERT INTO richieste (user_id, tipo, data_inizio, data_fine, motivo, stato, creato_il, ora_inizio, ora_fine)
            VALUES (?, ?, ?, ?, ?, 'in_attesa', ?, ?, ?)''',
@@ -1011,7 +1568,10 @@ def crea_richiesta():
         user_id=user_id,
         data_riferimento=data_inizio
     )
-    
+
+    # Avvisa l'admin se in quel periodo ci sono già altri colleghi con
+    # ferie/permessi richiesti o approvati (il dipendente è già stato
+    # avvisato ed ha confermato prima dell'invio, tramite popup).
     if colleghi_sovrapposti:
         elenco = formatta_elenco_nomi(colleghi_sovrapposti)
         verbo = 'ha' if len(colleghi_sovrapposti) == 1 else 'hanno'
@@ -1024,12 +1584,84 @@ def crea_richiesta():
             data_riferimento=data_inizio
         )
 
-        flash(
-            f"Attenzione: anche {elenco} {verbo} già ferie o permessi richiesti o approvati "
-            f"che si sovrappongono a questo periodo. La tua richiesta è stata comunque inviata "
-            f"ed è ora in attesa di approvazione.",
-            'sovrapposizione'
-        )
+    return redirect(url_for('richieste_page'))
+
+
+@app.route('/richieste/<int:richiesta_id>/elimina', methods=['POST'])
+def elimina_richiesta(richiesta_id):
+    """Permette al dipendente di eliminare una propria richiesta ancora in
+    attesa di approvazione. Una richiesta già approvata o rifiutata non può
+    essere eliminata direttamente: per quelle approvate esiste la richiesta
+    di rimozione, che deve passare dall'admin."""
+    if 'user' not in session or session.get('tipo_utente') == 'admin':
+        return jsonify({'ok': False, 'errore': 'Non autenticato'}), 401
+
+    user_id = session['user'].get('id')
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM richieste WHERE id = ? AND user_id = ?', (richiesta_id, user_id))
+    richiesta = cursor.fetchone()
+
+    if richiesta is None:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Richiesta non trovata'}), 404
+
+    if richiesta['stato'] != 'in_attesa':
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Puoi eliminare solo le richieste ancora in attesa'}), 400
+
+    cursor.execute('DELETE FROM richieste WHERE id = ?', (richiesta_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for('richieste_page'))
+
+
+@app.route('/richieste/<int:richiesta_id>/richiedi_rimozione', methods=['POST'])
+def richiedi_rimozione_richiesta(richiesta_id):
+    """Permette al dipendente di chiedere all'admin la rimozione di una
+    ferie o permesso già approvato. Non elimina nulla direttamente: segnala
+    solo la richiesta all'amministratore, che dovrà approvarla."""
+    if 'user' not in session or session.get('tipo_utente') == 'admin':
+        return jsonify({'ok': False, 'errore': 'Non autenticato'}), 401
+
+    user_id = session['user'].get('id')
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM richieste WHERE id = ? AND user_id = ?', (richiesta_id, user_id))
+    richiesta = cursor.fetchone()
+
+    if richiesta is None:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Richiesta non trovata'}), 404
+
+    if richiesta['stato'] != 'approvata':
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Puoi chiedere la rimozione solo di una richiesta già approvata'}), 400
+
+    if richiesta['rimozione_richiesta']:
+        conn.close()
+        return jsonify({'ok': False, 'errore': 'Hai già chiesto la rimozione di questa richiesta'}), 400
+
+    cursor.execute('UPDATE richieste SET rimozione_richiesta = 1 WHERE id = ?', (richiesta_id,))
+
+    cursor.execute('SELECT name, cognome FROM users WHERE id = ?', (user_id,))
+    utente = cursor.fetchone()
+    conn.commit()
+    conn.close()
+
+    nome_completo = f"{utente['name']} {utente['cognome']}" if utente else 'Un dipendente'
+    etichetta_tipo = 'ferie' if richiesta['tipo'] == 'ferie' else 'permesso'
+    periodo = richiesta['data_inizio'] if richiesta['data_inizio'] == richiesta['data_fine'] else f"dal {richiesta['data_inizio']} al {richiesta['data_fine']}"
+
+    crea_notifica(
+        f"{nome_completo} chiede di rimuovere {etichetta_tipo} già approvato/a ({periodo})",
+        tipo='rimozione',
+        user_id=user_id,
+        data_riferimento=richiesta['data_inizio']
+    )
 
     return redirect(url_for('richieste_page'))
 
@@ -1045,7 +1677,8 @@ def richieste_eventi():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        '''SELECT tipo, data_inizio, data_fine, stato FROM richieste
+        '''SELECT tipo, data_inizio, data_fine, stato, ora_inizio, ora_fine, motivo
+           FROM richieste
            WHERE user_id = ? AND stato IN ('approvata', 'in_attesa')''',
         (user_id,)
     )
@@ -1060,6 +1693,47 @@ def richieste_eventi():
                 'data_inizio': r['data_inizio'],
                 'data_fine': r['data_fine'],
                 'stato': r['stato'],
+                'ora_inizio': r['ora_inizio'],
+                'ora_fine': r['ora_fine'],
+                'motivo': r['motivo'],
+            }
+            for r in righe
+        ]
+    })
+
+
+@app.route('/admin/calendario/eventi')
+def admin_calendario_eventi():
+    """Restituisce, in JSON, tutte le ferie e i permessi approvati di tutti
+    i dipendenti, da mostrare nel calendario aziendale del pannello admin."""
+    if session.get('tipo_utente') != 'admin':
+        return jsonify({'ok': False, 'errore': 'Non autenticato'}), 401
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''SELECT richieste.tipo, richieste.data_inizio, richieste.data_fine,
+                  richieste.ora_inizio, richieste.ora_fine, richieste.motivo,
+                  users.name, users.cognome
+           FROM richieste JOIN users ON users.id = richieste.user_id
+           WHERE richieste.stato = 'approvata'
+           ORDER BY richieste.data_inizio ASC'''
+    )
+    righe = cursor.fetchall()
+    conn.close()
+
+    return jsonify({
+        'ok': True,
+        'eventi': [
+            {
+                'tipo': r['tipo'],
+                'data_inizio': r['data_inizio'],
+                'data_fine': r['data_fine'],
+                'ora_inizio': r['ora_inizio'],
+                'ora_fine': r['ora_fine'],
+                'motivo': r['motivo'],
+                'nome': r['name'],
+                'cognome': r['cognome'],
             }
             for r in righe
         ]
